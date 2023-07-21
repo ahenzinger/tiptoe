@@ -1,0 +1,15 @@
+{
+"num_embed_servers": 40,
+"num_url_servers": 4,
+"servers_per_machine": 2,
+"disk_size": 30,
+"region": "us-east-1",
+"placement": "us-east-1f",
+"keyname": "<your key name here>",
+"instance_type": "r5.xlarge",
+"lat_client_instance_type": "r5.large",
+"tput_client_instance_type": "r5.8xlarge",
+"ami_id": "ami-0df821b98de4b1ed9",
+"security": "<your security group name here>",
+"secret_key_path": "<your secret key pair path here>"
+}

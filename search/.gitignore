@@ -1,0 +1,4 @@
+*.out
+*.txt
+*.prof
+ignore/
