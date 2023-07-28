@@ -1,10 +1,9 @@
 import time
 from multiprocessing import Pool
 import concurrent.futures
-from util.ssh_util import *
-from util.ec2_util import *
-from util.prop_util import *
-from util.math_util import *
+from ec2_util.ssh_util import *
+from ec2_util.ec2_util import *
+from ec2_util.prop_util import *
 
 # Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY as environment variables
 

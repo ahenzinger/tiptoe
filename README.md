@@ -182,6 +182,7 @@ To use this script, please update the security group (under `security`), the sec
 [4h, launches 47 AWS instances] Then, run:
 ```
 cd perf-eval/
+./fetchScripts.sh
 python3 runExp.py
 cd ..
 ```
