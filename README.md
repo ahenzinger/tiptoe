@@ -191,8 +191,6 @@ This script will print `Experiments finished.` to the console when it terminates
 - for the nearest-neighbor-service throughput experiment: `tiptoe/perf-eval/text-logs/40-4-2-tput-embed.log`
 - for the URL-service throughput experiment: `tiptoe/perf-eval/text-logs/40-4-2-tput-url.log`
 
-(We give sample logs output by running this command in `tiptoe/perf-eval/text-logs/`.)
-
 The latency experiment log contains a list of queries, the client-perceived latency and the communication incurred to answer each query, and the Tiptoe servers' answer. The end of the file contains a table summarizing the performance measurements.
 
 The throughput experiment log contains the hint size and cryptographic parameters used, followed by a list of (1) number of clients, (2) total number of queries answered by the Tiptoe servers in a minute, and (3) computed throughput, for increasing numbers of clients. The end of the file contains a table summarizing the performance measurements.
