@@ -80,7 +80,7 @@ func readHint(hintFile string) *TiptoeHint {
 
     hint := new(TiptoeHint)
     decoder := gob.NewDecoder(f)
-    if decoder.Decode(&hint) == nil {
+    if decoder.Decode(&hint) != nil {
       return nil
     } 
 
@@ -88,7 +88,7 @@ func readHint(hintFile string) *TiptoeHint {
 }
 
 func saveHint(hintFile string, hint *TiptoeHint) {
-    f, err := os.Open(hintFile)
+    f, err := os.Create(hintFile)
     if err != nil {
       return
     }
@@ -99,20 +99,28 @@ func saveHint(hintFile string, hint *TiptoeHint) {
     encoder.Encode(hint)
 }
 
+func printStep(text string, cnt *int) {
+  
+  *cnt += 1
+}
+
 func RunClient(coordinatorAddr string, conf *config.Config, hintFile string) {
   fmt.Println("Setting up client")
-  fmt.Println("  0. Contacting coordinator server to get hint")
+  fmt.Println("  0. Getting hint")
 
   c := NewClient(true /* use coordinator */)
 
   var hint *TiptoeHint
   if len(hintFile) > 0 {
+    fmt.Println("    Attempting to read hint from file", hintFile)
     hint = readHint(hintFile)
   }
 
   if hint == nil {
+    fmt.Println("    Fetching hint from network", hintFile)
     hint = c.getHint(true /* keep conn */, coordinatorAddr)
-    saveHint(hintFile, hint) 
+    fmt.Println("    Writing hint to file", hintFile)
+    go saveHint(hintFile, hint) 
   }
 
   c.Setup(hint)
@@ -134,7 +142,7 @@ func RunClient(coordinatorAddr string, conf *config.Config, hintFile string) {
     //perf := c.preprocessRound(true /* verbose */)
     perf := <-perfC
 
-    col.Println("Enter private search query: ")
+    col.Printf("Enter private search query: ")
     text := utils.ReadLineFromStdin()
     if (strings.TrimSpace(text) == "") || (strings.TrimSpace(text) == "quit") {
       break
