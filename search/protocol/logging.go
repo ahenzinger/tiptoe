@@ -59,7 +59,7 @@ func logHintSize(hint *TiptoeHint) float64 {
     fmt.Printf("\t\tUrls map: %.2f MB\n", m)
   }
 
-  fmt.Printf("\tTotal hint: %.2f MB\n\n", total)
+  fmt.Printf("\tTotal hint: %.2f MB\n", total)
   return total
 }
 
@@ -71,9 +71,9 @@ func logStats[T matrix.Elem](numDocs uint64,
   upSz := utils.MessageSizeMB(*up)
   downSz := utils.MessageSizeMB(*down)
 
-  fmt.Printf("\tAnswered query to %d-cluster corpus in: %s\n", numDocs, elapsed)
+  fmt.Printf("\tAnswered query to %d-document corpus in: %s\n", numDocs, elapsed)
   fmt.Printf("\tUpload: %.2f MB\n", upSz)
-  fmt.Printf("\tDownload: %.2f MB\n\n", downSz)
+  fmt.Printf("\tDownload: %.2f MB\n", downSz)
 
   return elapsed.Seconds(), upSz, downSz
 }

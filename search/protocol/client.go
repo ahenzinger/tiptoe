@@ -135,7 +135,7 @@ func RunClient(coordinatorAddr string, conf *config.Config, hintFile string) {
   perfMax := 5
   perfC := make(chan Perf, perfMax)
 
-  col := color.New(color.FgMagenta).Add(color.Bold)
+  col := color.New(color.FgYellow).Add(color.Bold)
 
   go func() {
     for {
@@ -152,13 +152,16 @@ func RunClient(coordinatorAddr string, conf *config.Config, hintFile string) {
     fmt.Printf("\n\n")
     col.Printf("Enter private search query: ")
     text := utils.ReadLineFromStdin()
+    fmt.Printf("\n\n")
     if (strings.TrimSpace(text) == "") || (strings.TrimSpace(text) == "quit") {
       break
     }
     c.runRound(perf, in, out, text, coordinatorAddr, true /* verbose */, true /* keep conn */)
   }
 
-  c.rpcClient.Close()
+  if c.rpcClient != nil {
+    c.rpcClient.Close()
+  }
   in.Close()
   out.Close()
 }
@@ -181,7 +184,8 @@ func (c *Client) preprocessRound(verbose bool) Perf {
 
 func (c *Client) runRound(p Perf, in io.WriteCloser, out io.ReadCloser, 
                           text, coordinatorAddr string, verbose, keepConn bool) Perf {
-  fmt.Printf("\tExecuting query \"%s\"\n", text)
+  y := color.New(color.FgYellow, color.Bold)
+  fmt.Printf("Executing query \"%s\"\n", y.Sprintf(text))
 
   // Build embeddings query
   start := time.Now()
@@ -262,7 +266,7 @@ func (c *Client) runRound(p Perf, in io.WriteCloser, out io.ReadCloser,
 
     if chunk == retrievedChunk {
       if verbose {
-        fmt.Printf("\t(%d) {score %s] -- %s\n", j, 
+        fmt.Printf("\t% 3d) [score %s] %s\n", j, 
           color.YellowString(fmt.Sprintf("% 4d", scores[at])),
           color.BlueString(corpus.GetIthUrl(urls, index)))
       }
@@ -274,7 +278,7 @@ func (c *Client) runRound(p Perf, in io.WriteCloser, out io.ReadCloser,
   }
 
   p.clientTotal = time.Since(start).Seconds()
-  fmt.Printf("\tAnswered in:\n\t\t %v (preproc)\n\t\t%v (client)\n\t\t%v (round 1)\n\t\t%v (round 2)\n\t\t%v (total)\n---\n", 
+  fmt.Printf("\tAnswered in:\n\t\t%v (preproc)\n\t\t%v (client)\n\t\t%v (round 1)\n\t\t%v (round 2)\n\t\t%v (total)\n---\n", 
               p.clientPreproc, p.clientSetup, p.t1, p.t2, p.clientTotal)
  
   return p
