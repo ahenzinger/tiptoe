@@ -124,7 +124,7 @@ func RunClient(coordinatorAddr string, conf *config.Config, hintFile string) {
     fmt.Println("\tFetching hint from network", hintFile)
     hint = c.getHint(true /* keep conn */, coordinatorAddr)
     fmt.Println("\tWriting hint to file", hintFile)
-    go saveHint(hintFile, hint) 
+    saveHint(hintFile, hint) 
   }
 
   c.Setup(hint)
@@ -132,23 +132,14 @@ func RunClient(coordinatorAddr string, conf *config.Config, hintFile string) {
 
   in, out := embeddings.SetupEmbeddingProcess(c.NumClusters(), conf)
 
-  perfMax := 5
-  perfC := make(chan Perf, perfMax)
-
   col := color.New(color.FgYellow).Add(color.Bold)
 
-  go func() {
-    for {
-      perfC <- c.preprocessRound(false)
-    }
-  }()
 
   for {
     c.stepCount = 1
     c.printStep("Running client preprocessing for decryption")
-    perf := <-perfC
+    perf := c.preprocessRound(true)
 
-    fmt.Printf("\tPreprocess buffer: %d/%d\n", len(perfC), perfMax)
     fmt.Printf("\n\n")
     col.Printf("Enter private search query: ")
     text := utils.ReadLineFromStdin()
@@ -176,7 +167,7 @@ func (c *Client) preprocessRound(verbose bool) Perf {
   p.clientPreproc = time.Since(start).Seconds()
 
   if verbose {
-    fmt.Printf("  preprocessing complete -- %fs\n\n", p.clientPreproc)
+    fmt.Printf("\tPreprocessing complete -- %fs\n\n", p.clientPreproc)
   }
 
   return p
