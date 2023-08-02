@@ -4,6 +4,7 @@ import (
   "fmt"
   "io"
   "os"
+  "log"
   "encoding/gob"
   "time"
   "strings"
@@ -51,6 +52,8 @@ type Client struct {
 
   rpcClient       *rpc.Client
   useCoordinator  bool
+
+  stepCount       int
 }
 
 func NewClient(useCoordinator bool) *Client {
@@ -99,27 +102,28 @@ func saveHint(hintFile string, hint *TiptoeHint) {
     encoder.Encode(hint)
 }
 
-func printStep(text string, cnt *int) {
-  
-  *cnt += 1
+func (c *Client) printStep(text string) {
+  col := color.New(color.FgGreen).Add(color.Bold)
+  col.Printf("%d) %v\n", c.stepCount, text)
+  c.stepCount += 1
 }
 
 func RunClient(coordinatorAddr string, conf *config.Config, hintFile string) {
-  fmt.Println("Setting up client")
-  fmt.Println("  0. Getting hint")
+  color.Yellow("Setting up client...")
 
   c := NewClient(true /* use coordinator */)
+  c.printStep("Getting hint")
 
   var hint *TiptoeHint
   if len(hintFile) > 0 {
-    fmt.Println("    Attempting to read hint from file", hintFile)
+    fmt.Println("\tAttempting to read hint from file", hintFile)
     hint = readHint(hintFile)
   }
 
   if hint == nil {
-    fmt.Println("    Fetching hint from network", hintFile)
+    fmt.Println("\tFetching hint from network", hintFile)
     hint = c.getHint(true /* keep conn */, coordinatorAddr)
-    fmt.Println("    Writing hint to file", hintFile)
+    fmt.Println("\tWriting hint to file", hintFile)
     go saveHint(hintFile, hint) 
   }
 
@@ -128,20 +132,24 @@ func RunClient(coordinatorAddr string, conf *config.Config, hintFile string) {
 
   in, out := embeddings.SetupEmbeddingProcess(c.NumClusters(), conf)
 
-  perfC := make(chan Perf, 5)
+  perfMax := 5
+  perfC := make(chan Perf, perfMax)
 
-  col := color.New(color.FgCyan).Add(color.Bold)
+  col := color.New(color.FgMagenta).Add(color.Bold)
 
   go func() {
     for {
-      perfC <- c.preprocessRound(true /* verbose */)
+      perfC <- c.preprocessRound(false)
     }
   }()
 
   for {
-    //perf := c.preprocessRound(true /* verbose */)
+    c.stepCount = 1
+    c.printStep("Running client preprocessing for decryption")
     perf := <-perfC
 
+    fmt.Printf("\tPreprocess buffer: %d/%d\n", len(perfC), perfMax)
+    fmt.Printf("\n\n")
     col.Printf("Enter private search query: ")
     text := utils.ReadLineFromStdin()
     if (strings.TrimSpace(text) == "") || (strings.TrimSpace(text) == "quit") {
@@ -173,13 +181,12 @@ func (c *Client) preprocessRound(verbose bool) Perf {
 
 func (c *Client) runRound(p Perf, in io.WriteCloser, out io.ReadCloser, 
                           text, coordinatorAddr string, verbose, keepConn bool) Perf {
-  fmt.Printf("Running round with \"%s\"\n", text)
+  fmt.Printf("\tExecuting query \"%s\"\n", text)
 
   // Build embeddings query
   start := time.Now()
   if verbose {
-    fmt.Printf("   Read: %s\n", text)
-    fmt.Println("  1. Generating embedding from this query")
+    c.printStep("Generating embedding of the query")
   }
 
   var query struct {
@@ -189,6 +196,7 @@ func (c *Client) runRound(p Perf, in io.WriteCloser, out io.ReadCloser,
 
   io.WriteString(in, text + "\n") // send query to embedding process
   if err := json.NewDecoder(out).Decode(&query); err != nil { // get back embedding + cluster
+    log.Printf("Did you remember to set up your python venv?")
     panic(err)
   }
 
@@ -197,7 +205,7 @@ func (c *Client) runRound(p Perf, in io.WriteCloser, out io.ReadCloser,
   }
 
   if verbose {
-    fmt.Printf("  2. Building PIR query for cluster %d\n", query.Cluster_index)
+    c.printStep(fmt.Sprintf("Building PIR query for cluster %d", query.Cluster_index))
   }
 
   embQuery := c.QueryEmbeddings(query.Emb, query.Cluster_index, true /* preprocessed */)
@@ -205,12 +213,13 @@ func (c *Client) runRound(p Perf, in io.WriteCloser, out io.ReadCloser,
 
   // Send embeddings query to server
   if verbose {
-    fmt.Printf("  3. Sending SimplePIR query to server\n")
+    c.printStep("Sending SimplePIR query to server")
   }
   networkingStart := time.Now()
   embAns := c.getEmbeddingsAnswer(embQuery, true /* keep conn */, coordinatorAddr)
   p.t1, p.up1, p.down1 = logStats(c.params.NumDocs, networkingStart, embQuery, embAns)
 
+  c.printStep("Decrypting server answer")
   // Recover document and URL chunk to query for
   embDec := c.ReconstructEmbeddingsWithinCluster(embAns, query.Cluster_index)
   scores := embeddings.SmoothResults(embDec, c.embClient.GetP())
@@ -218,10 +227,10 @@ func (c *Client) runRound(p Perf, in io.WriteCloser, out io.ReadCloser,
   docIndex := indicesByScore[0]
 
   if verbose {
-    fmt.Printf("  4. Decrypted server answer. Doc %d within cluster %d has the largest inner product with our query\n",
+    fmt.Printf("\tDoc %d within cluster %d has the largest inner product with our query\n",
                docIndex, query.Cluster_index)
-    fmt.Printf("  5. Building PIR query for url/title of doc %d in cluster %d\n", 
-               docIndex, query.Cluster_index)
+    c.printStep(fmt.Sprintf("Building PIR query for url/title of doc %d in cluster %d", 
+               docIndex, query.Cluster_index))
   }
 
   // Build URL query
@@ -229,7 +238,7 @@ func (c *Client) runRound(p Perf, in io.WriteCloser, out io.ReadCloser,
 
   // Send URL query to server
   if verbose {
-    fmt.Printf("  6. Sending PIR query to server for chunk %d\n", retrievedChunk)
+    c.printStep(fmt.Sprintf("Sending PIR query to server for chunk %d", retrievedChunk))
   }
   networkingStart = time.Now()
   urlAns := c.getUrlsAnswer(urlQuery, keepConn, coordinatorAddr)
@@ -238,7 +247,8 @@ func (c *Client) runRound(p Perf, in io.WriteCloser, out io.ReadCloser,
   // Recover URLs of top 10 docs in chunk
   urls := c.ReconstructUrls(urlAns, query.Cluster_index, docIndex)
   if verbose {
-    fmt.Printf("  7. Reconstructed PIR answers. The top 10 retrieved urls are:\n")
+    c.printStep("Reconstructed PIR answers.")
+    fmt.Printf("\tThe top 10 retrieved urls are:\n")
   }
 
   j := 1
@@ -252,7 +262,9 @@ func (c *Client) runRound(p Perf, in io.WriteCloser, out io.ReadCloser,
 
     if chunk == retrievedChunk {
       if verbose {
-        fmt.Printf("     (%d) %s (score %d)\n", j, corpus.GetIthUrl(urls, index), scores[at])
+        fmt.Printf("\t(%d) {score %s] -- %s\n", j, 
+          color.YellowString(fmt.Sprintf("% 4d", scores[at])),
+          color.BlueString(corpus.GetIthUrl(urls, index)))
       }
       j += 1
       if j > 10 {
@@ -262,7 +274,7 @@ func (c *Client) runRound(p Perf, in io.WriteCloser, out io.ReadCloser,
   }
 
   p.clientTotal = time.Since(start).Seconds()
-  fmt.Printf("Answered in: %v (preproc), %v (client), %v (round 1), %v (round 2),  %v (total)\n---\n", 
+  fmt.Printf("\tAnswered in:\n\t\t %v (preproc)\n\t\t%v (client)\n\t\t%v (round 1)\n\t\t%v (round 2)\n\t\t%v (total)\n---\n", 
               p.clientPreproc, p.clientSetup, p.t1, p.t2, p.clientTotal)
  
   return p
@@ -291,7 +303,7 @@ func (c *Client) Setup(hint *TiptoeHint) {
       c.embIndices[v] = true
     }
 
-    fmt.Printf("Embeddings client: %s\n", utils.PrintParams(c.embClient))
+    fmt.Printf("\tEmbeddings client: %s\n", utils.PrintParams(c.embClient))
   }
 
   if hint.ServeUrls {
@@ -308,7 +320,7 @@ func (c *Client) Setup(hint *TiptoeHint) {
       }
     }
   
-    fmt.Printf("URL client: %s\n", utils.PrintParams(c.urlClient))
+    fmt.Printf("\tURL client: %s\n", utils.PrintParams(c.urlClient))
   }
 
   if hint.ServeUrls && hint.ServeEmbeddings && 

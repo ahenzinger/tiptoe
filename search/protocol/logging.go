@@ -45,8 +45,8 @@ func logHintSize(hint *TiptoeHint) float64 {
     m := utils.MessageSizeMB(hint.EmbeddingsIndexMap)
     total += (h + m)
 
-    fmt.Printf("  Embeddings hint: %.2f MB\n", h)
-    fmt.Printf("  Embeddings map: %.2f MB\n", m)
+    fmt.Printf("\t\tEmbeddings hint: %.2f MB\n", h)
+    fmt.Printf("\t\tEmbeddings map: %.2f MB\n", m)
   }
 
   if hint.ServeUrls {
@@ -55,11 +55,11 @@ func logHintSize(hint *TiptoeHint) float64 {
     m := utils.MessageSizeMB(hint.UrlsIndexMap)
     total += (h + m)
 
-    fmt.Printf("  Urls hint: %.2f MB\n", h)
-    fmt.Printf("  Urls map: %.2f MB\n", m)
+    fmt.Printf("\t\tUrls hint: %.2f MB\n", h)
+    fmt.Printf("\t\tUrls map: %.2f MB\n", m)
   }
 
-  fmt.Printf("Total hint: %.2f MB\n\n", total)
+  fmt.Printf("\tTotal hint: %.2f MB\n\n", total)
   return total
 }
 
@@ -71,9 +71,9 @@ func logStats[T matrix.Elem](numDocs uint64,
   upSz := utils.MessageSizeMB(*up)
   downSz := utils.MessageSizeMB(*down)
 
-  fmt.Printf("Answered query to %d-cluster corpus in: %s\n", numDocs, elapsed)
-  fmt.Printf("  Upload: %.2f MB\n", upSz)
-  fmt.Printf("  Download: %.2f MB\n\n", downSz)
+  fmt.Printf("\tAnswered query to %d-cluster corpus in: %s\n", numDocs, elapsed)
+  fmt.Printf("\tUpload: %.2f MB\n", upSz)
+  fmt.Printf("\tDownload: %.2f MB\n\n", downSz)
 
   return elapsed.Seconds(), upSz, downSz
 }

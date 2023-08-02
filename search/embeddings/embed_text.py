@@ -11,9 +11,9 @@ new_dimension = 192
 prec = 5
 
 #CENTROIDS_FILE = "/home/ubuntu/text_centroids/centroids_all.npy"
-CENTROIDS_FILE = "/home/ubuntu/data/index.faiss"
+CENTROIDS_FILE = "%s/index.faiss"
 #PCA_COMPONENTS_FILE = "/home/ubuntu/text_data/pca_192.npy"
-PCA_COMPONENTS_FILE = "/home/ubuntu/data/pca_192.npy"
+PCA_COMPONENTS_FILE = "%s/pca_192.npy"
 
 def find_nearest_clusters(cluster_index, query, num_clusters):
         query_float = numpy.array(query).astype('float32')
@@ -44,7 +44,7 @@ def main():
     preamble = sys.argv[1]
     num_clusters = int(sys.argv[2])
 
-    clusterfile = CENTROIDS_FILE#preamble + "/kmeans-clusters.faiss"
+    clusterfile = CENTROIDS_FILE % preamble
     f1 = open(clusterfile, "rb")
     index = faiss.read_index(clusterfile)
     f1.close()
@@ -53,7 +53,7 @@ def main():
     #centroids = numpy.loadtxt(CENTROIDS_FILE)
     #centroids = numpy.round(centroids * (1 << prec))
 
-    components = numpy.load(PCA_COMPONENTS_FILE)
+    components = numpy.load(PCA_COMPONENTS_FILE % preamble)
 
     model_name="msmarco-distilbert-base-tas-b" 
     model = SentenceTransformer(model_name)
