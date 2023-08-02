@@ -18,6 +18,8 @@ import (
 // Where the corpus is stored
 var preamble = flag.String("preamble", "/home/ubuntu", "Preamble")
 
+var hintFile = flag.String("hintfile", "", "Hint file")
+
 // Whether or not running image search
 var image_search = flag.Bool("image_search", false, "Image search")
 
@@ -26,53 +28,56 @@ func printUsage() {
 }
 
 func main() {
-  printUsage()
   coordinatorIP := "0.0.0.0"
 
-  if len(os.Args) < 2 {
+  flag.Parse()
+  args := flag.Args()
+
+  if len(args) < 1 {
     return
   }
 
   conf := config.MakeConfig(*preamble + "/data/", *image_search)
 
-  if os.Args[1] == "client" {
-    if len(os.Args) >= 3 {
-      coordinatorIP = os.Args[2]
+  switch args[0] {
+  case "client":
+    if len(args) >= 2 {
+      coordinatorIP = args[1]
     }
 
     f, _ := os.Create("client.prof")
     pprof.StartCPUProfile(f)
     defer pprof.StopCPUProfile()
   
-    protocol.RunClient(utils.RemoteAddr(coordinatorIP, utils.CoordinatorPort), conf)
+    protocol.RunClient(utils.RemoteAddr(coordinatorIP, utils.CoordinatorPort), conf, *hintFile)
   
-  } else if os.Args[1] == "client-latency" {
+  case "client-latency":
     //debug.SetMemoryLimit(60 * 2^(30))
-    if len(os.Args) >= 3 {
-      coordinatorIP = os.Args[2]
+    if len(args) >= 2 {
+      coordinatorIP = os.Args[1]
     }
     protocol.BenchLatency(101 /* num queries */, 
                           utils.RemoteAddr(coordinatorIP, utils.CoordinatorPort), 
 			  "latency.log", conf) 
     utils.WriteFileToStdout("latency.log")
 
-  } else if os.Args[1] == "client-tput-embed" {
-    if len(os.Args) >= 3 {
-      coordinatorIP = os.Args[2]
+  case "client-tput-embed":
+    if len(args) >= 2 {
+      coordinatorIP = args[1]
     }
     protocol.BenchTputEmbed(utils.RemoteAddr(coordinatorIP, utils.CoordinatorPort), 
 			    "tput_embed.log")
     utils.WriteFileToStdout("tput_embed.log")
 
-  } else if os.Args[1] == "client-tput-url" {
-    if len(os.Args) >= 3 {
-      coordinatorIP = os.Args[2]
+  case "client-tput-url":
+    if len(args) >= 2 {
+      coordinatorIP = os.Args[1]
     }
     protocol.BenchTputUrl(utils.RemoteAddr(coordinatorIP, utils.CoordinatorPort), 
 			  "tput_url.log")
     utils.WriteFileToStdout("tput_url.log")
 
-  } else if os.Args[1] == "preprocess-all" {
+  case "preprocess-all":
     //debug.SetMemoryLimit(700 * 2^(30))
     protocol.NewEmbeddingServers(0,
                                  conf.MAX_EMBEDDINGS_SERVERS(),
@@ -93,7 +98,7 @@ func main() {
 			   conf)
     fmt.Println("Set up all url servers")
 
-  } else if os.Args[1] == "all-servers" {
+  case "all-servers":
     debug.SetMemoryLimit(700 * 2^(30))
     _, embAddrs, _ := protocol.NewEmbeddingServers(0,
                                                    conf.MAX_EMBEDDINGS_SERVERS(),
@@ -121,19 +126,19 @@ func main() {
 	                    true, // log
 			    conf)
 
-  } else if os.Args[1] == "coordinator" {
-    numEmbServers, err1 := strconv.Atoi(os.Args[2])
-    numUrlServers, err2 := strconv.Atoi(os.Args[3])
+    case "coordinator":
+    numEmbServers, err1 := strconv.Atoi(args[1])
+    numUrlServers, err2 := strconv.Atoi(args[2])
 
-    if err1 != nil || err2 != nil || len(os.Args) < 4 {
+    if err1 != nil || err2 != nil || len(args) < 3 {
       panic("Bad input")
     }
 
     addrs := make([]string, numEmbServers + numUrlServers)
     for i := 0; i < numEmbServers + numUrlServers; i++ {
       ip := "0.0.0.0"
-      if i+4 < len(os.Args) {
-        ip = os.Args[i+4]
+      if i+3 < len(args) {
+        ip = args[i+3]
       }
 
       if i < numEmbServers {
@@ -150,9 +155,9 @@ func main() {
 		            true, // log
 			    conf)
 
-  } else if os.Args[1] == "emb-server" {
+    case "emb-server":
     debug.SetMemoryLimit(20*2^(30)) // Necessary so don't run out of memory on r5.xlarge instances
-    i, _ := strconv.Atoi(os.Args[2])
+    i, _ := strconv.Atoi(args[1])
 
     log := conf.EmbeddingServerLog(i)
     if !utils.FileExists(log) {
@@ -162,9 +167,9 @@ func main() {
     server := protocol.NewServerFromFile(log)
     server.Serve(utils.EmbServerPortStart + i)
 
-  } else if os.Args[1] == "url-server" {
+  case "url-server":
     debug.SetMemoryLimit(20*2^(30)) // Necessary so don't run out of memory on r5.xlarge instances
-    i, _ := strconv.Atoi(os.Args[2])
+    i, _ := strconv.Atoi(args[1])
 
     log := conf.UrlServerLog(i)
     if !utils.FileExists(log) {
@@ -173,5 +178,8 @@ func main() {
 
     server := protocol.NewServerFromFile(log)
     server.Serve(utils.UrlServerPortStart + i)
+  default:
+    fmt.Printf("Got unknown command: %v", args[0])
+    printUsage()
   }
 }

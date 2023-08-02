@@ -3,6 +3,8 @@ package protocol
 import (
   "fmt"
   "io"
+  "os"
+  "encoding/gob"
   "time"
   "strings"
   "net/rpc"
@@ -20,6 +22,10 @@ import (
   "github.com/ahenzinger/tiptoe/search/config"
   "github.com/ahenzinger/tiptoe/search/embeddings"
   "github.com/ahenzinger/tiptoe/search/database"
+)
+
+import (
+  "github.com/fatih/color"
 )
 
 type QueryType interface {
@@ -64,21 +70,71 @@ func (c *Client) NumClusters() int {
   return len(c.urlMap)
 }
 
-func RunClient(coordinatorAddr string, conf *config.Config) {
+func readHint(hintFile string) *TiptoeHint {
+    f, err := os.Open(hintFile)
+    if err != nil {
+      return nil
+    }
+
+    defer f.Close()
+
+    hint := new(TiptoeHint)
+    decoder := gob.NewDecoder(f)
+    if decoder.Decode(&hint) == nil {
+      return nil
+    } 
+
+    return hint
+}
+
+func saveHint(hintFile string, hint *TiptoeHint) {
+    f, err := os.Open(hintFile)
+    if err != nil {
+      return
+    }
+
+    defer f.Close()
+
+    encoder := gob.NewEncoder(f)
+    encoder.Encode(hint)
+}
+
+func RunClient(coordinatorAddr string, conf *config.Config, hintFile string) {
   fmt.Println("Setting up client")
   fmt.Println("  0. Contacting coordinator server to get hint")
 
   c := NewClient(true /* use coordinator */)
-  hint := c.getHint(true /* keep conn */, coordinatorAddr)
+
+  var hint *TiptoeHint
+  if len(hintFile) > 0 {
+    hint = readHint(hintFile)
+  }
+
+  if hint == nil {
+    hint = c.getHint(true /* keep conn */, coordinatorAddr)
+    saveHint(hintFile, hint) 
+  }
+
   c.Setup(hint)
   logHintSize(hint)
 
   in, out := embeddings.SetupEmbeddingProcess(c.NumClusters(), conf)
 
-  for {
-    perf := c.preprocessRound(true /* verbose */)
+  perfC := make(chan Perf, 5)
 
-    fmt.Println("Enter private search query: ")
+  col := color.New(color.FgCyan).Add(color.Bold)
+
+  go func() {
+    for {
+      perfC <- c.preprocessRound(true /* verbose */)
+    }
+  }()
+
+  for {
+    //perf := c.preprocessRound(true /* verbose */)
+    perf := <-perfC
+
+    col.Println("Enter private search query: ")
     text := utils.ReadLineFromStdin()
     if (strings.TrimSpace(text) == "") || (strings.TrimSpace(text) == "quit") {
       break
@@ -106,6 +162,7 @@ func (c *Client) preprocessRound(verbose bool) Perf {
 
   return p
 }
+
 func (c *Client) runRound(p Perf, in io.WriteCloser, out io.ReadCloser, 
                           text, coordinatorAddr string, verbose, keepConn bool) Perf {
   fmt.Printf("Running round with \"%s\"\n", text)
