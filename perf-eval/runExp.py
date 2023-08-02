@@ -137,6 +137,7 @@ def download_embedding_data(ip_addr, shard_idx):
         executeRemoteCommand(getHostName(ip_addr), 'cd tiptoe/perf-eval/s3; python3 text_download_from_s3.py embedding %d' % start, key=properties['secret_key_path'])
         for i in range(start+1, end):
             executeRemoteCommand(getHostName(ip_addr), 'cd tiptoe/perf-eval/s3; python3 text_download_from_s3.py embedding %d' % i, key=properties['secret_key_path'])
+    executeRemoteCommand(getHostName(ip_addr), 'rm ~/.aws/credentials', key=properties['secret_key_path'])
 
 
 def download_url_data(ip_addr, shard_idx):
@@ -154,6 +155,7 @@ def download_url_data(ip_addr, shard_idx):
         executeRemoteCommand(getHostName(ip_addr), 'cd tiptoe/perf-eval/s3; python3 text_download_from_s3.py url %d' % start, key=properties['secret_key_path'])
         for i in range(start+1, end):
             executeRemoteCommand(getHostName(ip_addr), 'cd tiptoe/perf-eval/s3; python3 text_download_from_s3.py url %d' % i, key=properties['secret_key_path'])
+    executeRemoteCommand(getHostName(ip_addr), 'rm ~/.aws/credentials', key=properties['secret_key_path'])
 
 def download_coordinator_data(ip_addr):
     properties = loadPropertyFile(EC2_FILE)
@@ -161,6 +163,7 @@ def download_coordinator_data(ip_addr):
         executeRemoteCommand(getHostName(ip_addr), 'cd tiptoe/perf-eval/s3; python3 img_download_from_s3.py coordinator 0', key=properties['secret_key_path'])
     else:
         executeRemoteCommand(getHostName(ip_addr), 'cd tiptoe/perf-eval/s3; python3 text_download_from_s3.py coordinator 0', key=properties['secret_key_path'])
+    executeRemoteCommand(getHostName(ip_addr), 'rm ~/.aws/credentials', key=properties['secret_key_path'])
 
 def download_client_data(ip_addr):
     properties = loadPropertyFile(EC2_FILE)
@@ -168,6 +171,7 @@ def download_client_data(ip_addr):
         executeRemoteCommand(getHostName(ip_addr), 'cd tiptoe/perf-eval/s3; python3 img_download_from_s3.py client 0', key=properties['secret_key_path'])
     else:
         executeRemoteCommand(getHostName(ip_addr), 'cd tiptoe/perf-eval/s3; python3 text_download_from_s3.py client 0', key=properties['secret_key_path'])
+    executeRemoteCommand(getHostName(ip_addr), 'rm ~/.aws/credentials', key=properties['secret_key_path'])
 
 def setupAll():
     properties = loadPropertyFile(EC2_FILE)
