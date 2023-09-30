@@ -29,6 +29,7 @@ func testRecoverUrl(s *Server, corp *corpus.Corpus) {
   c.Setup(&h)
   logHintSize(&h)
 
+  tserv := setupTestServer(&h)
   for iter := 0; iter < urlNumQueries; iter++ {
     i := utils.RandomIndex(c.NumClusters())
     chunks, ok := c.urlMap[uint(i)]
@@ -46,8 +47,15 @@ func testRecoverUrl(s *Server, corp *corpus.Corpus) {
     answerUrl := corp.GetUrlsInCluster(i)
     recoveredUrl := ""
     for ch := 0; ch < numChunks; ch++ {
+      ct := c.PreprocessQuery()
+
+      offlineStart := time.Now()
+      uAns := applyHint(tserv, ct)
+      logOfflineStats(c.NumDocs(), offlineStart, ct, uAns)
+      c.ProcessHintApply(uAns)
+
       fakeIndex := c.urlMap.FakeIndexInSubcluster(i, uint64(ch))
-      q, _ := c.QueryUrls(i, fakeIndex, false)
+      q, _ := c.QueryUrls(i, fakeIndex)
 
       var ans pir.Answer[matrix.Elem32]
       start := time.Now()
@@ -70,10 +78,15 @@ func testRecoverUrl(s *Server, corp *corpus.Corpus) {
 func testRecoverUrlNetworked(tcp string, useCoordinator bool, corp *corpus.Corpus) {
   c := NewClient(useCoordinator)
 
-  h := c.getHint(false /* keep conn */, tcp)
+  var h *TiptoeHint
+  if !useCoordinator {
+    h = s.hint
+  } else {
+    h = k.hint 
+  }
   c.Setup(h)
   logHintSize(h)
-
+  tserv := setupTestServer(h)
   for iter := 0; iter < urlNumQueries; iter++ {
     i := utils.RandomIndex(c.NumClusters())
     _, ok := c.urlMap[uint(i)]
@@ -92,8 +105,20 @@ func testRecoverUrlNetworked(tcp string, useCoordinator bool, corp *corpus.Corpu
     answerUrl := corp.GetUrlsInCluster(i)
     recoveredUrl := ""
     for ch := 0; ch < numChunks; ch++ {
+      ct := c.PreprocessQuery()
+
+      var uAns *UnderhoodAnswer
+      offlineStart := time.Now()
+      if useCoordinator {
+        uAns = c.applyHint(ct, false /* keep conn */, tcp)
+      } else {
+        uAns = applyHint(tserv, ct)
+      }
+      logOfflineStats(c.NumDocs(), offlineStart, ct, uAns)
+      c.ProcessHintApply(uAns)
+
       fakeIndex := c.urlMap.FakeIndexInSubcluster(i, uint64(ch))
-      q, _ := c.QueryUrls(i, fakeIndex, false)
+      q, _ := c.QueryUrls(i, fakeIndex)
 
       start := time.Now()
       ans := c.getUrlsAnswer(q, false /* keep conn */, tcp)
@@ -101,7 +126,7 @@ func testRecoverUrlNetworked(tcp string, useCoordinator bool, corp *corpus.Corpu
 
       recovered := c.ReconstructUrls(ans, i, fakeIndex)
       checkSubclusterSize(recovered, i, ch, corp)
-       
+
       recoveredUrl += recovered
     }
 
@@ -117,8 +142,8 @@ func testUrlServerDumpState(s *Server, corp *corpus.Corpus) {
 
   intermfile := "interm/server_state.log"
   DumpStateToFile(s, intermfile)
-  LoadStateFromFile(&s2, intermfile)
-  testRecoverUrl(&s2, corp)
+  LoadStateFromFile(s2, intermfile)
+  testRecoverUrl(s2, corp)
 
   os.Remove(intermfile)
 }
@@ -130,8 +155,8 @@ func TestUrlFakeData(t *testing.T) {
 
   fmt.Printf("Running URL queries (over %d-doc fake corpus)\n", corp.GetNumDocs())
 
-  testRecoverUrl(&s, corp)
-  testUrlServerDumpState(&s, corp)
+  testRecoverUrl(s, corp)
+  testUrlServerDumpState(s, corp)
   testRecoverUrlNetworked(serverTcp, false, corp)
   testRecoverUrlNetworked(coordinatorTcp, true, corp)
 }
@@ -148,17 +173,17 @@ func TestUrlRealData(t *testing.T) {
   fmt.Printf("Running URL queries (over %d-doc real corpus)\n",
              corp.GetNumDocs())
 
-  testRecoverUrl(&s, corp)
-  testUrlServerDumpState(&s, corp)
+  testRecoverUrl(s, corp)
+  testUrlServerDumpState(s, corp)
   testRecoverUrlNetworked(serverTcp, false, corp)
   testRecoverUrlNetworked(coordinatorTcp, true, corp)
 }
 
 func TestUrlMultipleServersRealData(t *testing.T) {
   numServers := conf.MAX_URL_SERVERS()
-  _, tcps, corp := NewUrlServers(numServers, 
+  _, tcps, corp := NewUrlServers(numServers,
                                  100, // clusters per server
-				 config.DEFAULT_URL_HINT_SZ(), 
+				 config.DEFAULT_URL_HINT_SZ(),
 				 false, // log
 				 true,  // want corpus
 				 true,  // serve

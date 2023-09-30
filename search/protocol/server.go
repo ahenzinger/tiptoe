@@ -19,7 +19,7 @@ import (
 )
 
 // Number of servers to launch at once
-const BLOCK_SZ = 4
+const BLOCK_SZ = 10
 
 type TiptoeHint struct {
   CParams               corpus.Params
@@ -27,26 +27,25 @@ type TiptoeHint struct {
   ServeEmbeddings       bool
   EmbeddingsHint        utils.PIR_hint[matrix.Elem64]
   EmbeddingsIndexMap    database.ClusterMap
-  
+
   ServeUrls             bool
   UrlsHint              utils.PIR_hint[matrix.Elem32]
   UrlsIndexMap          database.SubclusterMap
 }
 
 type Server struct {
+  hint                  *TiptoeHint
   embeddingsServer      *pir.Server[matrix.Elem64]
   urlsServer            *pir.Server[matrix.Elem32]
-  hint                  *TiptoeHint
 }
-
 
 func (s *Server) PreprocessEmbeddingsFromCorpus(c *corpus.Corpus, hintSz uint64, conf *config.Config) {
   embeddings_seed := rand.RandomPRGKey()
   s.preprocessEmbeddingsSeeded(c, embeddings_seed, hintSz, conf)
 }
 
-func (s *Server) preprocessEmbeddingsSeeded(c *corpus.Corpus, 
-                                            seed *rand.PRGKey, 
+func (s *Server) preprocessEmbeddingsSeeded(c *corpus.Corpus,
+                                            seed *rand.PRGKey,
 					    hintSz uint64,
 				            conf *config.Config) {
   fmt.Printf("Preprocessing a corpus of %d embeddings of length %d\n",
@@ -80,10 +79,10 @@ func (s *Server) PreprocessUrlsFromCorpus(c *corpus.Corpus, hintSz uint64) {
   s.preprocessUrlsSeeded(c, urls_seed, hintSz)
 }
 
-func (s *Server) preprocessUrlsSeeded(c *corpus.Corpus, 
-                                      seed *rand.PRGKey, 
+func (s *Server) preprocessUrlsSeeded(c *corpus.Corpus,
+                                      seed *rand.PRGKey,
 				      hintSz uint64) {
-  fmt.Printf("Preprocessing a corpus of %d urls in chunks of length <= %d\n", 
+  fmt.Printf("Preprocessing a corpus of %d urls in chunks of length <= %d\n",
              c.GetNumDocs(), c.GetUrlBytes())
 
   db, indexMap := database.BuildUrlsDatabase(c, seed, hintSz)
@@ -102,30 +101,21 @@ func (s *Server) preprocessUrlsSeeded(c *corpus.Corpus,
   fmt.Println("    done")
 }
 
+// Note: need to keep full hint contents here!!
 func (s *Server) GetHint(request bool, hint *TiptoeHint) error {
   *hint = *s.hint 
   return nil
 }
 
-func (s *Server) GetEmbeddingsAnswer(query *pir.Query[matrix.Elem64], 
+func (s *Server) GetEmbeddingsAnswer(query *pir.Query[matrix.Elem64],
                                      ans *pir.Answer[matrix.Elem64]) error {
-  if !s.hint.ServeEmbeddings {
-    panic("Server does not hold the embeddings database.")
-  }
-
   *ans = *s.embeddingsServer.Answer(query)
-
   return nil
 }
 
-func (s *Server) GetUrlsAnswer(query *pir.Query[matrix.Elem32], 
+func (s *Server) GetUrlsAnswer(query *pir.Query[matrix.Elem32],
                                ans *pir.Answer[matrix.Elem32]) error {
-  if !s.hint.ServeUrls {
-    panic("Server does not hold the urls database.")
-  }
-
   *ans = *s.urlsServer.Answer(query)
-
   return nil
 }
 
@@ -149,7 +139,7 @@ func NewEmbeddingServers(serversStart, serversEnd, clustersPerServer int,
     }
 
     corpusSetup := func(j int) *corpus.Corpus {
-      return corpus.ReadEmbeddingsTxt(clustersPerServer * (i + j), 
+      return corpus.ReadEmbeddingsTxt(clustersPerServer * (i + j),
 			              clustersPerServer * (i + j + 1),
 			              conf)
     }
@@ -178,7 +168,7 @@ func NewEmbeddingServers(serversStart, serversEnd, clustersPerServer int,
 }
 
 func NewUrlServers(numServers, clustersPerServer int,
-                   hintSz uint64, 
+                   hintSz uint64,
 		   log, wantCorpus, serve bool,
 	           conf *config.Config) ([]*Server, []string, []*corpus.Corpus) {
   var servers []*Server
@@ -213,8 +203,8 @@ func NewUrlServers(numServers, clustersPerServer int,
   return servers, addrs, corpuses
 }
 
-func launchServers(num int, 
-                   corpusSetup func(int) *corpus.Corpus, 
+func launchServers(num int,
+                   corpusSetup func(int) *corpus.Corpus,
                    serverSetup func(*Server, *corpus.Corpus)) ([]*Server, []*corpus.Corpus) {
   servers := make([]*Server, num)
   corpuses := make([]*corpus.Corpus, num)
@@ -222,7 +212,7 @@ func launchServers(num int,
 
   for i := 0; i < num; i++ {
     go func(i int) {
-      servers[i] = new(Server)
+      servers[i] = serverInit() 
       corpuses[i] = corpusSetup(i)
       serverSetup(servers[i], corpuses[i])
       ch <- true
@@ -234,9 +224,9 @@ func launchServers(num int,
   return servers, corpuses
 }
 
-func launchServersFromLogs(logs []string, 
-                           corpusSetup func(int) *corpus.Corpus, 
-                           serverSetup func(*Server, *corpus.Corpus), 
+func launchServersFromLogs(logs []string,
+                           corpusSetup func(int) *corpus.Corpus,
+                           serverSetup func(*Server, *corpus.Corpus),
 			   wantCorpus bool) ([]*Server, []*corpus.Corpus) {
   if len(logs) == 0 {
     panic("Empty input")
@@ -259,10 +249,10 @@ func launchServersFromLogs(logs []string,
         }(i)
 	numLaunched += 1
       }
-   
+
       // in parallel, set up server
       go func(i int) {
-	servers[i] = new(Server)
+	servers[i] = serverInit() 
         LoadStateFromFile(servers[i], logs[i])
         ch <- true
       }(i)
@@ -270,7 +260,7 @@ func launchServersFromLogs(logs []string,
     } else {
       // generate corpus, set up server, and write to file in sequence
       go func(i int) {
-	servers[i] = new(Server)
+	servers[i] = serverInit() 
         corpuses[i] = corpusSetup(i)
 	serverSetup(servers[i], corpuses[i])
 	DumpStateToFile(servers[i], logs[i])
@@ -286,8 +276,14 @@ func launchServersFromLogs(logs []string,
 }
 
 func NewServerFromFile(file string) *Server {
-  s := new(Server)
+  s := serverInit() 
   LoadStateFromFile(s, file)
+  return s
+}
+
+func NewServerFromFileWithoutHint(file string) *Server {
+  s := serverInit() 
+  LoadServerFromFileWithoutHint(s, file)
   return s
 }
 
@@ -306,6 +302,11 @@ func Serve(servers []*Server, portOffset int) []string {
   }
 
   return addrs
+}
+
+func serverInit() *Server {
+  s := new(Server)
+  return s
 }
 
 func (s *Server) Clear() {

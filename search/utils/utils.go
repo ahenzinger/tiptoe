@@ -11,6 +11,7 @@ import (
 import (
   "github.com/henrycg/simplepir/pir"
   "github.com/henrycg/simplepir/matrix"
+  "github.com/ahenzinger/underhood/underhood"
 )
 
 const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ "
@@ -96,6 +97,10 @@ func MessageSizeBytes(m interface{}) uint64 {
     case map[uint]uint64:
       err = enc.Encode(&v)
     case map[uint][]uint64:
+      err = enc.Encode(&v)
+    case underhood.HintQuery:
+      err = enc.Encode(&v)
+    case underhood.HintAnswer:
       err = enc.Encode(&v)
     default:
       err = enc.Encode(&v)

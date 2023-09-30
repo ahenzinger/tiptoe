@@ -15,17 +15,20 @@ import json
 
 import estimate_perf
 from estimate_perf import WEB_HINT_SZ_MB
+from estimate_perf import WEB_PCA_SZ_MB
 from estimate_perf import WEB_MODEL_SZ_MB
 from estimate_perf import WEB_CENTROIDS_SZ_MB
 from estimate_perf import WEB_NUM_DOCS
 from estimate_perf import WEB_NUM_LOGICAL_SERVERS
 from estimate_perf import WEB_SHARDS_PER_MACHINE
 from estimate_perf import WEB_EMBEDDING_DIM
+from estimate_perf import WEB_EMBEDDING_M
 
 LINESPACE=0.8
 LABEL_XSHIFT=40
 
 AWS_DOLLAR_PER_HOUR = 0.252
+AWS_DOLLAR_PER_COORDINATOR_HOUR = 2.016 
 AWS_IN_DOLLAR_PER_GB = 0
 AWS_OUT_DOLLAR_PER_GB = 0.09
 
@@ -38,13 +41,14 @@ parser.add_argument('-f', '--file', action='store', nargs='+', type=str,
 parser.add_argument('-p', '--plot', action='store', type=str,
                     help='Plot to produce', required=True)
 parser.add_argument('-m', '--mrr', action='store', type=str,
-                    help='MRR output (only required for fig10)', required=False)
+                    help='MRR output (only required for fig9)', required=False)
 args = parser.parse_args()
 
 def parseCsv(csvfiles):
     data = {}
 
     for file in csvfiles:
+        print(file)
         with open(file) as f:
             reader = csv.reader(f)
             if "latency" in file:
@@ -53,7 +57,7 @@ def parseCsv(csvfiles):
                         next(reader) # skip until and including line with headers
                         break
             else:
-                for _ in range(39):
+                for _ in range(40):
                     next(reader)
 
             if "latency" in file:
@@ -69,7 +73,7 @@ def parseCsv(csvfiles):
                 num_servers1 = int(row[6])
                 num_servers2 = int(row[7])
 
-                hint_sz = WEB_HINT_SZ_MB #float(row[7])
+                hint_sz = WEB_HINT_SZ_MB #float(row[8])
                 time = float(row[9])
                 c_preproc = float(row[10])
                 c_start = float(row[11])
@@ -85,6 +89,11 @@ def parseCsv(csvfiles):
                 tput1 = float(row[20])
                 tput2 = float(row[21])
 
+                time_offline = float(row[22])
+                q_sz_offline = float(row[23])
+                a_sz_offline = float(row[24])
+                tput_offline = float(row[25])
+
                 num_servers = num_servers1 + num_servers2
                 if num_servers not in data:
                     data[num_servers] = {}
@@ -98,14 +107,18 @@ def parseCsv(csvfiles):
                     data[num_servers][num_docs]['client_preproc'] = []
                     data[num_servers][num_docs]['time1'] = []
                     data[num_servers][num_docs]['time2'] = []
+                    data[num_servers][num_docs]['time_offline'] = []
                     data[num_servers][num_docs]['query_sz'] = []
                     data[num_servers][num_docs]['query_sz1'] = []
                     data[num_servers][num_docs]['query_sz2'] = []
+                    data[num_servers][num_docs]['query_sz_offline'] = []
                     data[num_servers][num_docs]['ans_sz'] = []
                     data[num_servers][num_docs]['ans_sz1'] = []
                     data[num_servers][num_docs]['ans_sz2'] = []
+                    data[num_servers][num_docs]['ans_sz_offline'] = []
                     data[num_servers][num_docs]['tput1'] = []
                     data[num_servers][num_docs]['tput2'] = []
+                    data[num_servers][num_docs]['tput_offline'] = []
                     data[num_servers][num_docs]['emb_servers'] = num_servers1
                     data[num_servers][num_docs]['url_servers'] = num_servers2
 
@@ -117,12 +130,15 @@ def parseCsv(csvfiles):
                     data[num_servers][num_docs]['client_preproc'].append(c_preproc)
                     data[num_servers][num_docs]['time1'].append(time1)
                     data[num_servers][num_docs]['time2'].append(time2)
+                    data[num_servers][num_docs]['time_offline'].append(time_offline)
                     data[num_servers][num_docs]['query_sz'].append(q_sz)
                     data[num_servers][num_docs]['query_sz1'].append(q_sz1)
                     data[num_servers][num_docs]['query_sz2'].append(q_sz2)
+                    data[num_servers][num_docs]['query_sz_offline'].append(q_sz_offline)
                     data[num_servers][num_docs]['ans_sz'].append(a_sz)
                     data[num_servers][num_docs]['ans_sz1'].append(a_sz1)
                     data[num_servers][num_docs]['ans_sz2'].append(a_sz2)
+                    data[num_servers][num_docs]['ans_sz_offline'].append(a_sz_offline)
 
                 if tput1 > 0:
                     data[num_servers][num_docs]['tput1'].append(tput1)
@@ -130,59 +146,108 @@ def parseCsv(csvfiles):
                 if tput2 > 0:
                     data[num_servers][num_docs]['tput2'].append(tput2)
 
+                if tput_offline > 0:
+                    data[num_servers][num_docs]['tput_offline'].append(tput_offline)
+
     return data
 
-
-def webAnalytical(data):
+def webNumServers(data):
     ns = WEB_NUM_LOGICAL_SERVERS
     num_docs = WEB_NUM_DOCS
     ns1 = data[ns][num_docs]['emb_servers']
     ns2 = data[ns][num_docs]['url_servers']
+    return ns, ns1, ns2, num_docs
 
-    # TODO: Log + read in
-    hint1 = 755
-    hint2 = 130
+def offlineTput(data, ns, num_docs):
+    tputs_offline = [x for x in data[ns][num_docs]['tput_offline']]
+    if len(tputs_offline) > 0:
+        return np.max(tputs_offline)
+    assert(False)
 
-    # (1) Compute core-seconds per query
-    tput1 = 0.0 
+def embeddingTput(data, ns, num_docs):
     tputs1 = [x for x in data[ns][num_docs]['tput1']]
     if len(tputs1) > 0:
-        tput1 = np.max(tputs1)
-    else:
-        assert(False)
-    print("Tput 1 ", tput1)
+        return np.max(tputs1)
+    assert(False)
 
-    tput2 = 0.0
+def urlTput(data, ns, num_docs):
     tputs2 = [x for x in data[ns][num_docs]['tput2']]
     if len(tputs2) > 0:
-        tput2 = np.mean(tputs2)
-    else:
-        assert(False)
-    print("Tput 2 ", tput2)
+        return np.max(tputs2) 
+    assert(False)
 
-    core_sec = estimate_perf.tput_to_core_sec(tput1, data[ns][num_docs]['emb_servers']) + estimate_perf.tput_to_core_sec(tput2, data[ns][num_docs]['url_servers'])
-    print("Orig core sec: ", core_sec)
+def offlineComm(data, ns, num_docs):
+    q_offline = np.mean([x for x in data[ns][num_docs]['query_sz_offline']])
+    a_offline = np.mean([x for x in data[ns][num_docs]['ans_sz_offline']])
+    return q_offline, a_offline
 
-    # (2) Compute communication per query
+def onlineComm(data, ns, num_docs):
     q1 = np.mean([x for x in data[ns][num_docs]['query_sz1']])
     q2 = np.mean([x for x in data[ns][num_docs]['query_sz2']])
     a1 = np.mean([x for x in data[ns][num_docs]['ans_sz1']])
     a2 = np.mean([x for x in data[ns][num_docs]['ans_sz2']])
-    comm = q1 + q2 + a1 + a2
-    print("Comm ", comm, q1, a1, q2, a2)
+    return q1, q2, a1, a2
 
-    # (3) Compute storage per query (in GiB)
-    stor = np.mean([x/1024.0 for x in data[ns][num_docs]['hint_sz']])
-    print("Hint ", stor + estimate_perf.web_fixed_hint_size()/1024.0)
+def latency(data, ns, num_docs):
+    cp = np.mean([x for x in data[ns][num_docs]['client_preproc']])
+    t = np.mean([x for x in data[ns][num_docs]['time']])
+    t1 = np.mean([x for x in data[ns][num_docs]['time1']])
+    t2 = np.mean([x for x in data[ns][num_docs]['time2']])
+    t_offline = np.mean([x for x in data[ns][num_docs]['time_offline']])
+    return cp, t, t1, t2, t_offline
 
-    corpus_sz = num_docs
+# Warning: conservative! Assumes whole coordinator is blocked during a request
+def awsCost(ns1, ns2, q_offline, q1, q2, a_offline, a1, a2, tput_offline, tput1, tput2):
+    aws_bw_in = (q_offline + q1 + q2) / 1024.0 * AWS_IN_DOLLAR_PER_GB
+    aws_bw_out = (a_offline + a1 + a2) / 1024.0 * AWS_OUT_DOLLAR_PER_GB
+
+    aws_compute_offline = 1.0 / tput_offline * AWS_DOLLAR_PER_COORDINATOR_HOUR / (60 * 60)
+    aws_compute_1 = 1.0 / tput1 * (ns1 / WEB_SHARDS_PER_MACHINE * AWS_DOLLAR_PER_HOUR + AWS_DOLLAR_PER_COORDINATOR_HOUR) / (60 * 60)
+    aws_compute_2 = 1.0 / tput2 * (ns2 / WEB_SHARDS_PER_MACHINE * AWS_DOLLAR_PER_HOUR + AWS_DOLLAR_PER_COORDINATOR_HOUR) / (60 * 60)
+    aws_compute = aws_compute_offline + aws_compute_1 + aws_compute_2
+
+    aws_cost = aws_bw_in + aws_bw_out + aws_compute
+    return aws_cost
+
+def fig8(data):
+    ns, ns1, ns2, num_docs = webNumServers(data)
+
+    # (1) Compute core-seconds per query
+    tput_offline = offlineTput(data, ns, num_docs)
+    print("Tput offline: ", tput_offline)
+    tput1 = embeddingTput(data, ns, num_docs)
+    print("Tput 1: ", tput1)
+    tput2 = urlTput(data, ns, num_docs)
+    print("Tput 2: ", tput2)
+
+    offline_core_sec = estimate_perf.offline_tput_to_core_sec(tput_offline)
+    online_core_sec = estimate_perf.online_tput_to_core_sec(tput1, ns1) + estimate_perf.online_tput_to_core_sec(tput2, ns2)
+    core_sec = offline_core_sec + online_core_sec
+    print("Offline core sec: ", offline_core_sec)
+    print("Online core sec: ", online_core_sec)
+
+    # (2) Compute communication per query
+    q_offline, a_offline = offlineComm(data, ns, num_docs)
+    offline_comm = q_offline + a_offline
+    print("Offline comm: ", offline_comm, q_offline, a_offline)
+
+    q1, q2, a1, a2 = onlineComm(data, ns, num_docs)
+    online_comm = q1 + q2 + a1 + a2
+    print("Online comm: ", online_comm, q1, a1, q2, a2)
 
     # Extrapolate costs if corpus were larger
     x = 25
-    corpus_szs = [corpus_sz * i for i in range(0, x)]
-    y_core_sec = [estimate_perf.extrapolate_core_sec(num_docs, tput1, tput2, ns1, ns2, i) for i in range(0, x)]
-    y_comm = [estimate_perf.extrapolate_comm(num_docs, q1, a1, q2, a2, i) for i in range(0, x)]
-    y_stor = [estimate_perf.extrapolate_storage(num_docs, hint1, hint2, i)/1024.0 for i in range(0, x)]
+    corpus_szs = [num_docs * i for i in range(0, x)]
+    y_offline_core_sec = [estimate_perf.extrapolate_offline_core_sec(num_docs, tput_offline, i) for i in range(0, x)]
+    y_online_core_sec = [estimate_perf.extrapolate_online_core_sec(num_docs, tput1, tput2, ns1, ns2, i) for i in range(0, x)]
+    y_core_sec = [x + y for (x, y) in zip(y_offline_core_sec, y_online_core_sec)]
+    y_offline_comm = [estimate_perf.extrapolate_offline_comm(num_docs, q_offline, a_offline, i) for i in range(0, x)]
+    y_online_comm = [estimate_perf.extrapolate_online_comm(num_docs, q1, a1, q2, a2, i) for i in range(0, x)]
+
+    print("At 21: ")
+    print(corpus_szs[21], " docs")
+    print(y_offline_core_sec[21] + y_online_core_sec[21], " core-s")
+    print(y_offline_comm[21] + y_online_comm[21], " MiB")
 
     # Set up subplots
     fig, [ax1, ax2, ax3] = plt.subplots(3, 1, sharex=True, figsize=(3.5,3.5))
@@ -191,11 +256,11 @@ def webAnalytical(data):
     ax3.grid(True, 'major', color='gray', linestyle='-', linewidth=0.5, alpha=0.5, zorder=-3)
 
     # Add reference lines
-    comp_max = 750 * 2
+    comp_max = 2400
 
-    ax1.axvline(corpus_sz, color="red", zorder=-2, linestyle=":")
-    ax2.axvline(corpus_sz, color="red", zorder=-2, linestyle=":")
-    ax3.axvline(corpus_sz, color="red", zorder=-2, linestyle=":")
+    ax1.axvline(num_docs, color="red", zorder=-2, linestyle=":")
+    ax2.axvline(num_docs, color="red", zorder=-2, linestyle=":")
+    ax3.axvline(num_docs, color="red", zorder=-2, linestyle=":")
     ax1.text(500*10**6, comp_max+LABEL_XSHIFT, "Common\ncrawl C4", color="red", rotation=30, linespacing=LINESPACE, fontsize=9)
 
     ax1.axvline(167*10**6, color="tab:cyan", zorder=-2, linestyle=":")
@@ -215,28 +280,28 @@ def webAnalytical(data):
 
     # Plot performance
     ax1.plot(corpus_szs, y_core_sec, color="tab:blue", zorder=-1)
-    ax1.scatter(corpus_sz, core_sec, marker='X', color="tab:red", s=50, clip_on=False, zorder=10)
-    ax1.set_ylabel("Comp.")
+    ax1.scatter(num_docs, core_sec, marker='X', color="tab:red", s=50, clip_on=False, zorder=10)
+    ax1.set_ylabel("Computation", labelpad=6)
     ax1.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y,pos: ('{:.0f} core-s'.format(y))))
     ax1.set_ylim([0, np.max(y_core_sec)])
-    ax1.set_yticks([0, 500, 1000, 1500])
+    ax1.set_yticks([0, 750, 1500, 2250])
 
-    ax2.plot(corpus_szs, y_comm, color="tab:blue", zorder=-1)
-    ax2.scatter(corpus_sz, comm, marker='X', color="tab:red", s=50)
-    ax2.set_ylabel("Comm.")
+    ax2.plot(corpus_szs, y_offline_comm, color="tab:blue", zorder=-1)
+    ax2.scatter(num_docs, offline_comm, marker='X', color="tab:red", s=50)
+    ax2.set_ylabel("Comm.\n(token gen)", labelpad=10)
     ax2.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y,pos: ('{:.0f} MiB'.format(y))))
-    ax2.set_ylim([0, np.max(y_comm)])
+    ax2.set_ylim([0, np.max(y_offline_comm)])
     ax2.set_yticks([0, 25, 50, 75])
 
-    ax3.plot(corpus_szs, y_stor, color="tab:blue", zorder=-1)
-    ax3.scatter(corpus_sz, stor, marker='X', color="tab:red", s=50, label="Measured performance")
-    ax3.set_xlabel("Number of docs in corpus (billions)")
-    ax3.set_ylabel("Storage")
-    ax3.ticklabel_format(style='sci')
-    ax3.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y,pos: ('{:.0f} GiB'.format(y))))
-    ax3.set_ylim([0, np.max(y_stor)])
-    ax3.set_yticks([0, 2, 4, 6])
+    ax3.plot(corpus_szs, y_online_comm, color="tab:blue", zorder=-1)
+    ax3.scatter(num_docs, online_comm, marker='X', color="tab:red", s=50)
+    ax3.set_ylabel("Comm.\n(ranking + URL)", labelpad=10)
+    ax3.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y,pos: ('{:.0f} MiB'.format(y))))
+    ax3.set_ylim([0, np.max(y_online_comm)])
+    ax3.set_yticks([0, 25, 50, 75])
 
+    ax3.set_xlabel("Number of docs in corpus (billions)")
+    #a34.ticklabel_format(style='sci')
     ax3.set_xticks([0, 10**9, 2*10**9, 3*10**9, 4*10**9, 5*10**9, 6*10**9, 7*10**9, 8*10**9, 9*10**9, 10*10**9])
     ax3.xaxis.set_major_formatter(mticker.FuncFormatter(lambda y,pos: ('{:.0f}'.format(y/(10**9)))))
     ax3.set_xlim([10**6, np.max(corpus_szs)])
@@ -247,155 +312,120 @@ def webAnalytical(data):
     #ax0.legend([h[i] for i in order], [l[i] for i in order], loc="center", frameon=False,  columnspacing=0.2)
 
     plt.tight_layout()
-    plt.savefig("fig9.png", bbox_inches='tight')
+    plt.savefig("fig8.png", bbox_inches='tight')
 
-def table8(data):
-    ns = WEB_NUM_LOGICAL_SERVERS
-    num_docs = WEB_NUM_DOCS
-    ns1 = data[ns][num_docs]['emb_servers']
-    ns2 = data[ns][num_docs]['url_servers']
+def table7(data):
+    ns, ns1, ns2, num_docs = webNumServers(data)
+
+    # (1) Compute core-seconds per query
+    tput_offline = offlineTput(data, ns, num_docs)
+    tput1 = embeddingTput(data, ns, num_docs)
+    tput2 = urlTput(data, ns, num_docs)
+
+    offline_core_sec = estimate_perf.offline_tput_to_core_sec(tput_offline)
+    online_core_sec = estimate_perf.online_tput_to_core_sec(tput1, ns1) + estimate_perf.online_tput_to_core_sec(tput2, ns2)
+
+    # (2) Compute communication per query
+    q_offline, a_offline = offlineComm(data, ns, num_docs)
+    q1, q2, a1, a2 = onlineComm(data, ns, num_docs)
+
+    # (3) Compute latencies
+    cp, t, t1, t2, t_offline = latency(data, ns, num_docs)
 
     col_labels_1 = ["Setup cost", "Text"]
     col_labels_2 = ["Query cost", "Text"]
 
-    hint1 = 755
-    hint2 = 130
-
     table1 = [col_labels_1]
     table1.append(["Documents", WEB_NUM_DOCS])
     table1.append(["Embedding dimension", WEB_EMBEDDING_DIM])
-    table1.append(["Model storage (GiB)", WEB_MODEL_SZ_MB / 1024.0])
-    table1.append(["Centroid storage (GiB)", WEB_CENTROIDS_SZ_MB / 1024.0])
-    table1.append(["Hint storage, NN (GiB)", hint1 / 1024.0])
-    table1.append(["Hint storage, URL (GiB)", hint2 / 1024.0])
+    table1.append(["Model storage (MiB)", WEB_MODEL_SZ_MB ])
+    table1.append(["Centroid storage (MiB)", WEB_CENTROIDS_SZ_MB + WEB_PCA_SZ_MB ])
+    table1.append(["Hint storage (MiB)", WEB_HINT_SZ_MB ])
 
     table2 = [col_labels_2]
-    q1 = np.mean([x for x in data[ns][num_docs]['query_sz1']])
-    table2.append(["Communication Up, NN (MiB)", q1])
+    table2.append(["Offline communication Up (MiB)", q_offline])
+    table2.append(["Offline communication Down (MiB)", a_offline])
+    table2.append(["Online communication Up, Ranking (MiB)", q1])
+    table2.append(["Online communication Up, URL (MiB)", q2])
+    table2.append(["Online communication Down, Ranking (MiB)", a1])
+    table2.append(["Online ommunication Down, URL (MiB)", a2])
 
-    q2 = np.mean([x for x in data[ns][num_docs]['query_sz2']])
-    table2.append(["Communication Up, URL (MiB)", q2])
+    table2.append(["Offline server latency (s)", t_offline])
+    table2.append(["Offline client preprocessing time (s/query)", cp])
+    table2.append(["Online end-to-end latency (s)", t])
+    table2.append(["Online server latency, Ranking (s)", t1])
+    table2.append(["Online server latency, URL (s)", t2])
 
-    a1 = np.mean([x for x in data[ns][num_docs]['ans_sz1']])
-    table2.append(["Communication Down, NN (MiB)", a1])
-
-    a2 = np.mean([x for x in data[ns][num_docs]['ans_sz2']])
-    table2.append(["Communication Down, URL (MiB)", a2])
-
-    cp = np.mean([x for x in data[ns][num_docs]['client_preproc']])
-    table2.append(["Client preprocessing time (s/query)", cp])
-
-    t = np.mean([x for x in data[ns][num_docs]['time']])
-    table2.append(["Total end-to-end latency (s)", t])
-
-    t1 = np.mean([x for x in data[ns][num_docs]['time1']])
-    table2.append(["Server latency, NN (s)", t1])
-
-    t2 = np.mean([x for x in data[ns][num_docs]['time2']])
-    table2.append(["Server latency, URL (s)", t2])
-
-    tput1 = 0.0 
-    tputs1 = [x for x in data[ns][num_docs]['tput1']]
-    if len(tputs1) > 0:
-        tput1 = np.max(tputs1)
-    else:
-        assert(False)
-    table2.append(["Server throughput, NN (queries/s)", tput1])
-
-    tput2 = 0.0
-    tputs2 = [x for x in data[ns][num_docs]['tput2']]
-    if len(tputs2) > 0:
-        tput2 = np.mean(tputs2)
-    else:
-        assert(False)
-    table2.append(["Server throughput, URL (queries/s)", tput2])
+    table2.append(["Offline server throughput (queries/s)", tput_offline])
+    table2.append(["Online server throughput, Ranking (queries/s)", tput1])
+    table2.append(["Online server throughput, URL (queries/s)", tput2])
 
     print(tabulate(table1, headers='firstrow', tablefmt='fancy_grid'))
     print("")
     print(tabulate(table2, headers='firstrow', tablefmt='fancy_grid'))
     print("")
 
-def table7(data):
-    num_docs = WEB_NUM_DOCS
-    ns = WEB_NUM_LOGICAL_SERVERS
-    ns1 = data[ns][num_docs]['emb_servers']
-    ns2 = data[ns][num_docs]['url_servers']
+def table6(data):
+    ns, ns1, ns2, num_docs = webNumServers(data)
 
-    print("Text search over ", num_docs, " docs")
+    # (1) Compute core-seconds per query
+    tput_offline = offlineTput(data, ns, num_docs)
+    tput1 = embeddingTput(data, ns, num_docs)
+    tput2 = urlTput(data, ns, num_docs)
 
-    col_labels = ["Client storage (GiB)", "Communication (MiB/query)", "Server computation (core-s/query)", "End-to-end latency (s)", "AWS cost ($/query)"]
+    offline_core_sec = estimate_perf.offline_tput_to_core_sec(tput_offline)
+    online_core_sec = estimate_perf.online_tput_to_core_sec(tput1, ns1) + estimate_perf.online_tput_to_core_sec(tput2, ns2)
+    core_sec = offline_core_sec + online_core_sec
 
-    # Client storage
-    stor = np.mean([x/1024.0 for x in data[ns][num_docs]['hint_sz']])  + estimate_perf.web_fixed_hint_size()/1024.0
+    # (2) Compute communication per query
+    q_offline, a_offline = offlineComm(data, ns, num_docs)
+    offline_comm = q_offline + a_offline
+    q1, q2, a1, a2 = onlineComm(data, ns, num_docs)
+    online_comm = q1 + q2 + a1 + a2
 
-    # Communication per query
-    q1 = np.mean([x for x in data[ns][num_docs]['query_sz1']])
-    q2 = np.mean([x for x in data[ns][num_docs]['query_sz2']])
-    a1 = np.mean([x for x in data[ns][num_docs]['ans_sz1']])
-    a2 = np.mean([x for x in data[ns][num_docs]['ans_sz2']])
-    comm = q1 + q2 + a1 + a2
+    # (3) Compute latencies
+    cp, t, t1, t2, t_offline = latency(data, ns, num_docs)
 
-    # Server computation
-    tput1 = 0.0 
-    tputs1 = [x for x in data[ns][num_docs]['tput1']]
-    if len(tputs1) > 0:
-        tput1 = np.max(tputs1)
-    else:
-        assert(False)
+    # (4) Compute storage
+    storage = WEB_MODEL_SZ_MB + WEB_CENTROIDS_SZ_MB + WEB_PCA_SZ_MB + WEB_HINT_SZ_MB
 
-    tput2 = 0.0
-    tputs2 = [x for x in data[ns][num_docs]['tput2']]
-    if len(tputs2) > 0:
-        tput2 = np.mean(tputs2)
-    else:
-        assert(False)
+    # (5) Compute AWS cost
+    aws_cost = awsCost(ns1, ns2, q_offline, q1, q2, a_offline, a1, a2, tput_offline, tput1, tput2)
 
-    core_sec = estimate_perf.tput_to_core_sec(tput1, data[ns][num_docs]['emb_servers']) + estimate_perf.tput_to_core_sec(tput2, data[ns][num_docs]['url_servers'])
-
-    # End-to-end latency
-    t = np.mean([x for x in data[ns][num_docs]['time']])
-    t1 = np.mean([x for x in data[ns][num_docs]['time1']])
-    t2 = np.mean([x for x in data[ns][num_docs]['time2']])
-    ct = np.mean([x for x in data[ns][num_docs]['client_start']])
-    cp = np.mean([x for x in data[ns][num_docs]['client_preproc']])
-    #print("Latency: ", t, t1+t2+ct, ct, t1, t2)
-    #print("Preprocessing: ", cp)
-    lat = t
-
-    # AWS cost
-    aws_bw_in = (q1 + q2) / 1024.0 * AWS_IN_DOLLAR_PER_GB
-    aws_bw_out = (a1 + a2) / 1024.0 * AWS_OUT_DOLLAR_PER_GB
-    aws_compute_1 = 1.0 / tput1 * ns1 / WEB_SHARDS_PER_MACHINE * AWS_DOLLAR_PER_HOUR / (60 * 60)
-    aws_compute_2 = 1.0 / tput2 * ns2 / WEB_SHARDS_PER_MACHINE * AWS_DOLLAR_PER_HOUR / (60 * 60)
-    aws_compute = aws_compute_1 + aws_compute_2
-    aws_cost = aws_bw_in + aws_bw_out + aws_compute
+    col_labels = ["Client storage (MiB)", 
+                  "Offline Communication (MiB/query)", 
+                  "Online Communication (MiB/query)", 
+                  "Server computation (core-s/query)", 
+                  "End-to-end latency (s)", 
+                  "AWS cost ($/query)"]
 
     table = [col_labels]
-    table.append([stor, comm, core_sec, lat, aws_cost])
+    table.append([storage, offline_comm, online_comm, core_sec, t, aws_cost])
 
+    print("Text search over ", num_docs, " docs")
     print(tabulate(table, headers='firstrow', tablefmt='fancy_grid'))
     print("")
 
-def fig10(data, mrr_file):
-    ns = WEB_NUM_LOGICAL_SERVERS
-    num_docs = WEB_NUM_DOCS
+def fig9(data, mrr_file):
+    ns, ns1, ns2, num_docs = webNumServers(data)
 
     # (1) Compute core-seconds per query
-    tput1 = 0.0
-    tputs1 = [x for x in data[ns][num_docs]['tput1']]
-    if len(tputs1) > 0:
-        tput1 = np.max(tputs1)
-    else:
-        assert(False)
+    tput_offline = offlineTput(data, ns, num_docs)
+    tput1 = embeddingTput(data, ns, num_docs)
+    tput2 = urlTput(data, ns, num_docs)
 
-    tput2 = 0.0
-    tputs2 = [x for x in data[ns][num_docs]['tput2']]
-    if len(tputs2) > 0:
-        tput2 = np.max(tputs2)
-    else:
-        assert(False)
+    offline_core_sec = estimate_perf.offline_tput_to_core_sec(tput_offline)
+    online_core_sec_1 = estimate_perf.online_tput_to_core_sec(tput1, ns1) 
+    online_core_sec_2 = estimate_perf.online_tput_to_core_sec(tput2, ns2)
+    core_sec = offline_core_sec + online_core_sec_1 + online_core_sec_2
 
-    assert(data[ns][num_docs]['emb_servers'] + data[ns][num_docs]['url_servers'] == ns)
+    # (2) Compute communication per query
+    q_offline, a_offline = offlineComm(data, ns, num_docs)
+    offline_comm = q_offline + a_offline
+    q1, q2, a1, a2 = onlineComm(data, ns, num_docs)
+    online_comm_1 = q1 + a1
+    online_comm_2 = q2 + a2
+    online_comm = online_comm_1 + online_comm_2
 
     with open(mrr_file, 'r') as f:
         mrr_data = json.load(f)
@@ -412,46 +442,50 @@ def fig10(data, mrr_file):
     #quality_boundary_clusters_url_cluster_pca = 0.104017
     quality_boundary_clusters_url_cluster_pca = mrr_data['boundary_url_cluster_pca'] 
 
-    quality_tf_idf = 0.063407
+    quality_tf_idf = 0.152
+    #quality_tf_idf = 0.063407
     quality_bm25 = 0.230
     quality_colbert = 0.440
 
     coeus_core_sec = 900000
     coeus_comm = 3.6 * 1024
 
-    core_sec_1 = estimate_perf.tput_to_core_sec(tput1, data[ns][num_docs]['emb_servers'])
-    core_sec_2 = estimate_perf.tput_to_core_sec(tput1, data[ns][num_docs]['url_servers'])
-    core_sec = core_sec_1 + core_sec_2
-
-    core_sec_no_opts = (core_sec_1 / 192.0 * 768.0 + core_sec_2 * 100.0) / 1.2
-    core_sec_basic_clusters_all = (core_sec_1 / 192.0 * 768.0 + core_sec_2 * 100.0) / 1.2
-    core_sec_basic_clusters_url_random = (core_sec_1 / 192.0 * 768.0 + core_sec_2) / 1.2
-    core_sec_basic_clusters_url_cluster = (core_sec_1 / 192.0 * 768.0 + core_sec_2) / 1.2
-    core_sec_boundary_clusters_url_cluster = core_sec_1 / 192.0 * 768.0 + core_sec_2
-    core_sec_boundary_clusters_url_cluster_pca = core_sec_1 + core_sec_2
+    #core_sec_no_opts = WEB_EMBEDDING_M / 768.0 * offline_core_sec / math.sqrt(1.2) + (online_core_sec_1 / 192.0 * 768.0 + online_core_sec_2 * 100.0) / 1.2
+    core_sec_no_opts = offline_core_sec / math.sqrt(1.2) + (online_core_sec_1 / 192.0 * 768.0 + online_core_sec_2 * 100.0) / 1.2
+    core_sec_basic_clusters_all = core_sec_no_opts 
+    core_sec_basic_clusters_url_random = offline_core_sec / math.sqrt(1.2) + (online_core_sec_1 / 192.0 * 768.0 + online_core_sec_2) / 1.2
+    core_sec_basic_clusters_url_cluster = core_sec_basic_clusters_url_random
+    core_sec_boundary_clusters_url_cluster = offline_core_sec + online_core_sec_1 / 192.0 * 768.0 + online_core_sec_2
+    core_sec_boundary_clusters_url_cluster_pca = offline_core_sec + online_core_sec_1 + online_core_sec_2
 
     # (2) Compute communication per query
-    query_sz_nn = np.mean([x for x in data[ns][num_docs]['query_sz1']])
-    ans_sz_nn = np.mean([x for x in data[ns][num_docs]['ans_sz1']])
-    query_sz_url = np.mean([x for x in data[ns][num_docs]['query_sz2']])
-    ans_sz_url = np.mean([x for x in data[ns][num_docs]['ans_sz2']])
+    scale_before_dup = 1.0 / 1.2
+    offline_comm_before_dup = estimate_perf.extrapolate_offline_comm(num_docs, q_offline, a_offline, scale_before_dup)
+    online_comm_2_before_dup = online_comm_2 # Dup does not affect URL service!!
 
-    comm_no_opts = num_docs * 64 / 8.0 / 1024.0 / 1024.0 + (query_sz_url + ans_sz_url) * 100.0   # in MB, 1 64-bit integer per document
+    # in MB, two 64-bit integer per document (one offline/one online)
+    comm_no_opts = q_offline + 2 * num_docs * 64 / 8.0 / 1024.0 / 1024.0 + 100.0 * online_comm_2_before_dup
     print("Comm no opts: ", comm_no_opts)
 
-    comm_basic_clusters_all = estimate_perf.extrapolate_comm(num_docs, query_sz_nn, ans_sz_nn, 0, 0, 768.0 / 192.0 / 1.2) + 100.0 * estimate_perf.extrapolate_comm(num_docs, 0, 0, query_sz_url, ans_sz_url, 1 / 1.2)
-    print("Comm basic clusters: ", comm_basic_clusters_all, estimate_perf.extrapolate_comm(num_docs, query_sz_nn, ans_sz_nn, 0, 0, 768.0 / 192.0 / 1.2), 100.0 * estimate_perf.extrapolate_comm(num_docs, 0, 0, query_sz_url, ans_sz_url, 1 / 1.2))
+    comm_basic_clusters_all = offline_comm_before_dup + \
+                              estimate_perf.extrapolate_online_comm(num_docs, q1 * 768.0 / 192.0, a1, 0, 0, scale_before_dup) + \
+                              100.0 * online_comm_2_before_dup
+    print("Comm basic clusters: ", comm_basic_clusters_all)
 
-    comm_basic_clusters_url_random = estimate_perf.extrapolate_comm(num_docs, query_sz_nn, ans_sz_nn, 0, 0, 768.0 / 192.0 / 1.2) + estimate_perf.extrapolate_comm(num_docs, 0, 0, query_sz_url, ans_sz_url, 1/1.2)
+    comm_basic_clusters_url_random = offline_comm_before_dup + \
+                                     estimate_perf.extrapolate_online_comm(num_docs, q1 * 768.0 / 192.0, a1, 0, 0, scale_before_dup) + \
+                                     online_comm_2_before_dup
     print("Comm basic clusters url random: ", comm_basic_clusters_url_random)
 
-    comm_basic_clusters_url_cluster = estimate_perf.extrapolate_comm(num_docs, query_sz_nn, ans_sz_nn, 0, 0, 768.0 / 192.0 / 1.2) + estimate_perf.extrapolate_comm(num_docs, 0, 0, query_sz_url, ans_sz_url, 1 / 1.2)
+    comm_basic_clusters_url_cluster = comm_basic_clusters_url_random
     print("Comm url cluster: ", comm_basic_clusters_url_cluster)
 
-    comm_boundary_clusters_url_cluster = estimate_perf.extrapolate_comm(num_docs, query_sz_nn, ans_sz_nn, 0, 0, 768.0 / 192.0) + query_sz_url + ans_sz_url
+    comm_boundary_clusters_url_cluster = offline_comm + \
+                                         q1 * (768.0 / 192.0) + a1 + \
+                                         online_comm_2
     print("Comm boundary clusters: ", comm_boundary_clusters_url_cluster)
 
-    comm_boundary_clusters_url_cluster_pca = query_sz_nn + ans_sz_nn + query_sz_url + ans_sz_url
+    comm_boundary_clusters_url_cluster_pca = offline_comm + online_comm_1 + online_comm_2
     print("Comm PCA: ", comm_boundary_clusters_url_cluster_pca)
 
     opts = ["Tiptoe (no opts)", "Tiptoe (+basic cluster)", "Tiptoe (+boundary cluster)", "Tiptoe (all opts)"]
@@ -503,7 +537,7 @@ def fig10(data, mrr_file):
     ax1.axvline(x=coeus_comm, linestyle="dotted", color="red")
     #ax1.axhline(y=quality_colbert, linestyle="dashed", color="gray")
     ax1.set_ylabel("Search quality (MRR@100)")
-    ax1.set_xlabel("Communication")
+    ax1.set_xlabel("Total client-server communication, per query")
     ax1.text(1, quality_bm25, "BM25", fontsize=7, color='purple')
     ax1.text(1, quality_tf_idf, "tf-idf", fontsize=7, color='orange')
     ax1.text(coeus_comm, 0.4, "Coeus", color="red", rotation=45, fontsize=7)
@@ -544,7 +578,7 @@ def fig10(data, mrr_file):
     ax2.axhline(y=quality_tf_idf, linestyle="dotted", color="orange")
     ax2.axvline(x=coeus_core_sec, linestyle="dotted", color="red")
     ax2.set_ylabel("Search quality (MRR@100)")
-    ax2.set_xlabel("Computation (core-s)")
+    ax2.set_xlabel("Total server computation, per query (core-s)")
     ax2.text(1, quality_bm25, "BM25", fontsize=7, color='purple')
     ax2.text(1, quality_tf_idf, "tf-idf", fontsize=7, color='orange')
 
@@ -594,18 +628,18 @@ def fig10(data, mrr_file):
             bbox=bbox_props)
 
     plt.tight_layout()
-    plt.savefig("fig10.png")
+    plt.savefig("fig9.png")
 
 def main(args):
     data = parseCsv(args.file)
-    if args.plot == "fig9":
-        return webAnalytical(data)
-    if args.plot == "table8":
-        return table8(data)
+    if args.plot == "fig8":
+        return fig8(data)
     if args.plot == "table7":
         return table7(data)
-    if args.plot == "fig10":
-        return fig10(data, args.mrr)
+    if args.plot == "table6":
+        return table6(data)
+    if args.plot == "fig9":
+        return fig9(data, args.mrr)
 
 if __name__ == "__main__":
     main(args)

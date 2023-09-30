@@ -10,12 +10,20 @@ import (
 import (
   "github.com/henrycg/simplepir/pir"
   "github.com/henrycg/simplepir/matrix"
+  "github.com/ahenzinger/underhood/underhood"
 )
 
 import (
   "github.com/ahenzinger/tiptoe/search/utils"
   "github.com/ahenzinger/tiptoe/search/config"
   "github.com/ahenzinger/tiptoe/search/embeddings"
+)
+
+type ExperimentType int
+const (
+  EMBEDDINGS ExperimentType = 0
+  URLS       ExperimentType = 1
+  OFFLINE    ExperimentType = 2
 )
 
 func BenchLatency(numQueries int, coordinatorAddr, logfile string, conf *config.Config) {
@@ -39,7 +47,7 @@ func BenchLatency(numQueries int, coordinatorAddr, logfile string, conf *config.
   for iter := 0; iter < numQueries; iter++ {
     fmt.Printf("%d.\n", iter)
 
-    p := c.preprocessRound(false)
+    p := c.preprocessRound(coordinatorAddr, true /* verbose */, true /* keep conn */)
     perf[iter] = c.runRound(p, in, out, txtQueries[iter], coordinatorAddr, true /* verbose */, true /* keep conn */)
   }
 
@@ -53,10 +61,10 @@ func BenchLatency(numQueries int, coordinatorAddr, logfile string, conf *config.
   out.Close()
 }
 
-func benchTput[T matrix.Elem](coordinatorAddr, logfile string, 
-			      embedding bool,
-                              buildQuery func(*Client) *pir.Query[T],
-                              sendQuery func(*pir.Query[T], *rpc.Client) ) {
+func benchTput[T QueryType](coordinatorAddr, logfile string,
+			    experiment ExperimentType,
+                            buildQuery func(*Client) *T,
+                            sendQuery func(*T, *rpc.Client) ) {
   c := NewClient(true /* coordinator */)
   h := c.getHint(false /* keep conn */, coordinatorAddr)
   hintSz := logHintSize(h)
@@ -66,7 +74,7 @@ func benchTput[T matrix.Elem](coordinatorAddr, logfile string,
 
   fmt.Println("Set up first client")
 
-  queries := make([]*pir.Query[T], numQueries)
+  queries := make([]*T, numQueries)
   for i := 0; i < numQueries; i++ {
     queries[i] = buildQuery(c)
   }
@@ -129,13 +137,16 @@ func benchTput[T matrix.Elem](coordinatorAddr, logfile string,
                numClients, queriesAnswered, elapsed.Seconds())
     fmt.Printf("  Measured tput: %f queries/second\n", tput)
 
-    if embedding {
+    switch experiment {
+    case EMBEDDINGS:
       p.tput1 = tput
-    } else {
+    case URLS:
       p.tput2 = tput
+    case OFFLINE:
+      p.tputOffline = tput
     }
-    perf = append(perf, p)
 
+    perf = append(perf, p)
     time.Sleep(60000 * time.Millisecond) // To wait for stragglers...
   }
 
@@ -148,7 +159,9 @@ func benchTput[T matrix.Elem](coordinatorAddr, logfile string,
 func BenchTputEmbed(coordinatorAddr, logfile string) {
   buildQuery := func (c *Client) *pir.Query[matrix.Elem64] {
     emb := embeddings.RandomEmbedding(c.params.EmbeddingSlots, (1 << (c.params.SlotBits-1)))
-    return c.QueryEmbeddings(emb, 0, false) // Doesn't matter which index recovering...
+    c.embClient.HintQuery()
+    c.embClient.PreprocessQueryLHE()
+    return c.QueryEmbeddings(emb, 0) // Doesn't matter which index recovering...
   }
 
   sendQuery := func (query *pir.Query[matrix.Elem64], rpcClient *rpc.Client) {
@@ -156,12 +169,14 @@ func BenchTputEmbed(coordinatorAddr, logfile string) {
     utils.CallTLS(rpcClient, "Coordinator.GetEmbeddingsAnswer", query, &reply)
   }
 
-  benchTput(coordinatorAddr, logfile, true, buildQuery, sendQuery)
+  benchTput(coordinatorAddr, logfile, EMBEDDINGS, buildQuery, sendQuery)
 }
 
 func BenchTputUrl(coordinatorAddr, logfile string) {
   buildQuery := func (c *Client) *pir.Query[matrix.Elem32] {
-    q, _ := c.QueryUrls(0, 0, false) // Doesn't matter which index recovering...
+    c.urlClient.HintQuery()
+    c.urlClient.PreprocessQuery()
+    q, _ := c.QueryUrls(0, 0) // Doesn't matter which index recovering...
     return q
   }
 
@@ -170,5 +185,18 @@ func BenchTputUrl(coordinatorAddr, logfile string) {
     utils.CallTLS(rpcClient, "Coordinator.GetUrlsAnswer", query, &reply)
   }
 
-  benchTput(coordinatorAddr, logfile, false, buildQuery, sendQuery)
+  benchTput(coordinatorAddr, logfile, URLS, buildQuery, sendQuery)
+}
+
+func BenchTputOffline(coordinatorAddr, logfile string) {
+  buildQuery := func (c *Client) *underhood.HintQuery {
+    return c.PreprocessQuery()
+  }
+
+  sendQuery := func (query *underhood.HintQuery, rpcClient *rpc.Client) {
+    reply := UnderhoodAnswer{}
+    utils.CallTLS(rpcClient, "Coordinator.ApplyHint", query, &reply)
+  }
+
+  benchTput(coordinatorAddr, logfile, OFFLINE, buildQuery, sendQuery)
 }

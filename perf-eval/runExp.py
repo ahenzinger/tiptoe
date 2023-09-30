@@ -74,7 +74,7 @@ def provision():
     print("Started all URL servers")
     
     # Start coordinator
-    startEc2Instance(conn, properties["ami_id"], key, properties["instance_type"], [properties["security"]], properties["placement"], name=getCoordinatorName(), disk_size=properties["disk_size"])
+    startEc2Instance(conn, properties["ami_id"], key, properties["coordinator_instance_type"], [properties["security"]], properties["placement"], name=getCoordinatorName(), disk_size=properties["disk_size"])
     print("Started coordinator")
     
     # Start latency client
@@ -117,7 +117,7 @@ def setup_machine(ip_addr):
     executeRemoteCommand(getHostName(ip_addr), 'mkdir -p ~/.aws', key=properties['secret_key_path'])
     sendFile("~/.aws/credentials", getHostName(ip_addr), "~/.aws/credentials", key=properties['secret_key_path'])
 
-    executeRemoteCommand(getHostName(ip_addr), 'ssh-keyscan github.com >> ~/.ssh/known_hosts; git clone git@github.com:ahenzinger/tiptoe.git', key=properties['secret_key_path'], flags="-A")
+    executeRemoteCommand(getHostName(ip_addr), 'ssh-keyscan github.com >> ~/.ssh/known_hosts; git clone git@github.com:ahenzinger/tiptoe.git; source /home/ubuntu/.profile; cd tiptoe; go mod download', key=properties['secret_key_path'], flags="-A")
     #executeRemoteCommand(getHostName(ip_addr), 'ssh-keyscan github.com >> ~/.ssh/known_hosts; cd tiptoe; git pull', key=properties['secret_key_path'], flags="-A")
     #executeRemoteCommand(getHostName(ip_addr), 'sudo sysctl -w net.ipv4.tcp_congestion_control=bbr')
 
@@ -248,7 +248,8 @@ def setupExp():
             executeRemoteCommand(getHostName(machines['url_server_ip_address'][i]), ('source /home/ubuntu/.profile; cd tiptoe/search; if pgrep server; then pkill -f server; fi; nohup go run . url-server %d > /dev/null 2>&1 &') % at, key=properties['secret_key_path'])
     
 
-        time.sleep(240)
+        time.sleep(300)
+
     print("Started all server processes, waiting to start coordinator")
 
     ip_string = " ".join(np.repeat(machines['embed_server_private_ip_address'], num_logical)) + " " + " ".join(np.repeat(machines['url_server_private_ip_address'], num_logical))
@@ -273,9 +274,10 @@ def runLatencyExp():
     client_out = executeRemoteCommandWithOutputReturn(getHostName(machines['lat_client_ip_address']), 'source /home/ubuntu/.profile; cd tiptoe/search; ./wan.sh; go run . client-latency %s %s' % (machines['coordinator_private_ip_address'], flag), key=properties['secret_key_path'])
     print("Latency experiment finished")
 
-    prefix = "text-logs/"
+    prefix = "camera-ready-text/"
     if args.image_search:
-        prefix = "img-logs/"
+        prefix = "camera-ready-img/"
+
     fn = prefix + str(properties['num_embed_servers']) + "-" + str(properties['num_url_servers']) + "-" + str(properties['servers_per_machine']) + "-latency.log"
     with open(fn, "w") as f:
         f.write(client_out)
@@ -291,9 +293,10 @@ def runTputExp():
     client_out = executeRemoteCommandWithOutputReturn(getHostName(machines['tput_client_ip_address']), 'source /home/ubuntu/.profile; cd tiptoe/search; go run . client-tput-embed %s %s' % (machines['coordinator_private_ip_address'], flag), key=properties['secret_key_path'])
     print("Embedding throughput experiment finished")
 
-    prefix = "text-logs/"
+    prefix = "camera-ready-text/"
     if args.image_search:
-        prefix = "img-logs/"
+        prefix = "camera-ready-img/"
+
     fn = prefix + str(properties['num_embed_servers']) + "-" + str(properties['num_url_servers']) + "-" + str(properties['servers_per_machine']) + "-tput-embed.log"
     with open(fn, "w") as f:
         f.write(client_out)
@@ -302,6 +305,13 @@ def runTputExp():
     print("URL throughput experiment finished")
 
     fn = prefix + str(properties['num_embed_servers']) + "-" + str(properties['num_url_servers']) + "-" + str(properties['servers_per_machine']) + "-tput-url.log"
+    with open(fn, "w") as f:
+        f.write(client_out)
+
+    client_out = executeRemoteCommandWithOutputReturn(getHostName(machines['tput_client_ip_address']), 'source /home/ubuntu/.profile; cd tiptoe/search; go run . client-tput-offline %s' % (machines['coordinator_private_ip_address']), key=properties['secret_key_path'])
+    print("Offline throughput experiment finished")
+
+    fn = prefix + str(properties['num_embed_servers']) + "-" + str(properties['num_url_servers']) + "-" + str(properties['servers_per_machine']) + "-tput-offline.log"
     with open(fn, "w") as f:
         f.write(client_out)
 

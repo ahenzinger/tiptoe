@@ -11,23 +11,37 @@ func (c *Config) TxtCorpus(clusterId int) string {
 }
 
 func (c *Config) EmbeddingServerLog(serverId int) string {
-  return fmt.Sprintf("%s/artifact-eval/dim%d/cluster-server-%d.log", 
+  return fmt.Sprintf("%s/artifact/dim%d/cluster-server-%d.log", 
                      c.preamble, 
 		     c.EMBEDDINGS_DIM(), 
 		     serverId)
 }
 
 func (c *Config) UrlServerLog(serverId int) string {
-  return fmt.Sprintf("%s/artifact-eval/dim%d/url-server-%d.log",
+  return fmt.Sprintf("%s/artifact/dim%d/url-server-%d.log",
                      c.preamble,
 		     c.EMBEDDINGS_DIM(), 
 		     serverId)
 }
 
 func (c *Config) CoordinatorLog(numEmbServers, numUrlServers int) string {
-  return fmt.Sprintf("%s/artifact-eval/dim%d/coordinator-%d-%d.log", 
+  return fmt.Sprintf("%s/artifact/dim%d/coordinator-%d-%d.log", 
                      c.preamble,
 		     c.EMBEDDINGS_DIM(), 
 		     numEmbServers, 
 		     numUrlServers)
+}
+
+func (c *Config) EmbeddingServerLogWithoutHint(serverId int) string {
+  return fmt.Sprintf("%s/artifact/dim%d/cluster-server-no-hint-%d.log",
+                     c.preamble,
+		     c.EMBEDDINGS_DIM(),
+		     serverId)
+}
+
+func (c *Config) UrlServerLogWithoutHint(serverId int) string {
+  return fmt.Sprintf("%s/artifact/dim%d/url-server-no-hint-%d.log",
+                     c.preamble,
+ 		     c.EMBEDDINGS_DIM(),
+ 		     serverId)
 }

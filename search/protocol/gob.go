@@ -3,6 +3,7 @@ package protocol
 import (
   "os"
   "bytes"
+  "strings"
   "encoding/gob"
 )
 
@@ -34,6 +35,10 @@ func (k *Coordinator) GobEncode() ([]byte, error) {
   }
 
   err = enc.Encode(k.hint)
+  if err != nil {
+    return buf.Bytes(), err
+  }
+
   return buf.Bytes(), err
 }
 
@@ -90,7 +95,7 @@ func (k *Coordinator) GobDecode(buf []byte) error {
     return err
   }
 
-  return nil
+  return err
 }
 
 func (s *Server) GobDecode(buf []byte) error {
@@ -102,20 +107,20 @@ func (s *Server) GobDecode(buf []byte) error {
   }
 
   if s.hint.ServeEmbeddings {
-    err = dec.Decode(&s.embeddingsServer)
+    err := dec.Decode(&s.embeddingsServer)
     if err != nil {
       return err
     }
   }
 
   if s.hint.ServeUrls {
-    err = dec.Decode(&s.urlsServer)
+    err := dec.Decode(&s.urlsServer)
     if err != nil {
       return err
     }
   }
 
-  return err
+  return nil
 }
 
 func DumpStateToFile[S TiptoeServer](s *S, filename string) {
@@ -143,5 +148,53 @@ func LoadStateFromFile[S TiptoeServer](s *S, filename string) {
   err = dec.Decode(&s)
   if err != nil {
     panic(err)
+  }
+}
+
+
+func DumpServerToFileWithoutHint(s *Server, filename string) {
+  f, err := os.Create(filename) // deletes prior contents
+  if err != nil {
+    panic(err)
+  }
+  defer f.Close()
+
+  enc := gob.NewEncoder(f)
+
+  if s.embeddingsServer != nil {
+    s.embeddingsServer.DropHint()
+    err = enc.Encode(s.embeddingsServer)
+    if err != nil {
+      panic(err)
+    }
+  }
+
+  if s.urlsServer != nil {
+    s.urlsServer.DropHint()
+    err = enc.Encode(s.urlsServer)
+    if err != nil {
+      panic(err)
+    }
+  }  
+}
+
+func LoadServerFromFileWithoutHint(s *Server, filename string) {
+  f, err := os.Open(filename)
+  if err != nil {
+    panic(err)
+  }
+  defer f.Close()
+
+  dec := gob.NewDecoder(f)
+  if !strings.Contains(filename, "url") { // hacky. TODO: fix
+    err = dec.Decode(&s.embeddingsServer)
+    if err != nil {
+      panic(err)
+    }
+  } else {
+    err = dec.Decode(&s.urlsServer)
+    if err != nil {
+      panic(err)
+    }
   }
 }

@@ -12,6 +12,7 @@ import (
 import (
   "github.com/henrycg/simplepir/pir"
   "github.com/henrycg/simplepir/matrix"
+  "github.com/ahenzinger/underhood/underhood"
 )
 
 import (
@@ -33,6 +34,10 @@ type Perf struct {
   down2          float64
   tput1          float64
   tput2          float64
+  tOffline       float64
+  upOffline      float64
+  downOffline    float64
+  tputOffline    float64
 }
 
 func logHintSize(hint *TiptoeHint) float64 {
@@ -45,8 +50,8 @@ func logHintSize(hint *TiptoeHint) float64 {
     m := utils.MessageSizeMB(hint.EmbeddingsIndexMap)
     total += (h + m)
 
-    fmt.Printf("  Embeddings hint: %.2f MB\n", h)
-    fmt.Printf("  Embeddings map: %.2f MB\n", m)
+    fmt.Printf("\t\tEmbeddings hint: %.2f MB\n", h)
+    fmt.Printf("\t\tEmbeddings map: %.2f MB\n", m)
   }
 
   if hint.ServeUrls {
@@ -55,25 +60,40 @@ func logHintSize(hint *TiptoeHint) float64 {
     m := utils.MessageSizeMB(hint.UrlsIndexMap)
     total += (h + m)
 
-    fmt.Printf("  Urls hint: %.2f MB\n", h)
-    fmt.Printf("  Urls map: %.2f MB\n", m)
+    fmt.Printf("\t\tUrls hint: %.2f MB\n", h)
+    fmt.Printf("\t\tUrls map: %.2f MB\n", m)
   }
 
-  fmt.Printf("Total hint: %.2f MB\n\n", total)
+  fmt.Printf("\tTotal metadata: %.2f MB\n", total)
   return total
 }
 
-func logStats[T matrix.Elem](numDocs uint64, 
-                             start time.Time, 
+func logOfflineStats(numDocs uint64,
+                     start time.Time,
+		     up *underhood.HintQuery,
+		     down *UnderhoodAnswer) (float64, float64, float64) {
+  elapsed := time.Since(start)
+  upSz := utils.MessageSizeMB(*up)
+  downSz := utils.MessageSizeMB(down.EmbAnswer) + utils.MessageSizeMB(down.UrlAnswer)
+
+  fmt.Printf("\tPreprocessed query to %d-document corpus in: %s\n", numDocs, elapsed)
+  fmt.Printf("\tUpload: %.2f MB\n", upSz)
+  fmt.Printf("\tDownload: %.2f MB\n", downSz)
+
+  return elapsed.Seconds(), upSz, downSz
+}
+
+func logStats[T matrix.Elem](numDocs uint64,
+                             start time.Time,
                              up *pir.Query[T],
 			     down *pir.Answer[T]) (float64, float64, float64) {
   elapsed := time.Since(start)
   upSz := utils.MessageSizeMB(*up)
   downSz := utils.MessageSizeMB(*down)
 
-  fmt.Printf("Answered query to %d-cluster corpus in: %s\n", numDocs, elapsed)
-  fmt.Printf("  Upload: %.2f MB\n", upSz)
-  fmt.Printf("  Download: %.2f MB\n\n", downSz)
+  fmt.Printf("\tAnswered query to %d-document corpus in: %s\n", numDocs, elapsed)
+  fmt.Printf("\tUpload: %.2f MB\n", upSz)
+  fmt.Printf("\tDownload: %.2f MB\n", downSz)
 
   return elapsed.Seconds(), upSz, downSz
 }
@@ -84,7 +104,7 @@ func checkAnswer(got, index, p uint64, emb []int8, corp *corpus.Corpus) {
   res := embeddings.SmoothResult(got, p)
 
   if res != shouldBe {
-    fmt.Printf("Recovering doc %d: got %d instead of %d\n", 
+    fmt.Printf("Recovering doc %d: got %d instead of %d\n",
                index / corp.GetEmbeddingSlots(), res, shouldBe)
     panic("Bad answer")
   }
@@ -106,9 +126,9 @@ func checkAnswers(got []uint64, cluster uint, p uint64, emb []int8, corp *corpus
   }
 }
 
-func checkSubclusterSize(recoveredUrl string, 
-                         clusterIndex uint64, 
-			 chunkIndex int, 
+func checkSubclusterSize(recoveredUrl string,
+                         clusterIndex uint64,
+			 chunkIndex int,
 			 corp *corpus.Corpus) {
   occ := corpus.CountUrls(recoveredUrl)
   shouldBe := corp.SizeOfSubclusterByIndex(uint(clusterIndex), chunkIndex)
@@ -131,14 +151,14 @@ func initCsv(fn string) {
   writer := csv.NewWriter(f)
   defer writer.Flush()
 
-  records := []string{"Trial", "NumClients", "NumDocs", "EmbeddingSlots", "SlotBits", "UrlBytes", "Num servers 1", "Num servers 2", "Hint (MB)", "T (s)", "CP (s)", "CS (s)", "T1 (s)", "T2 (s)", "Q (MB)", "Q1 (MB)", "Q2 (MB)", "A (MB)", "A1 (MB)", "A2 (MB)", "Tput1 (queries/s)", "Tput2 (queries/s)"}
+  records := []string{"Trial", "NumClients", "NumDocs", "EmbeddingSlots", "SlotBits", "UrlBytes", "Num servers 1", "Num servers 2", "Hint (MB)", "Time (s)", "CP (s)", "CS (s)", "Time 1 (s)", "Time 2 (s)", "Q (MB)", "Q1 (MB)", "Q2 (MB)", "A (MB)", "A1 (MB)", "A2 (MB)", "Tput1 (queries/s)", "Tput2 (queries/s)", "Time offline (s)", "Q offline (MB)", "A offline (MB)", "Tput offline (queries/s)"}
   writer.Write(records)
 }
 
-func writeLatencyCsv(fn string, 
-                     perf []Perf, 
-		     corpus *corpus.Params, 
-                     hintSz float64, 
+func writeLatencyCsv(fn string,
+                     perf []Perf,
+		     corpus *corpus.Params,
+                     hintSz float64,
 		     numEmbServers, numUrlServers int) {
   f := utils.OpenAppendFile(fn)
   defer f.Close()
@@ -161,23 +181,27 @@ func writeLatencyCsv(fn string,
 			  strconv.FormatFloat(perf[i].clientSetup, 'f', 4, 64),
 			  strconv.FormatFloat(perf[i].t1, 'f', 4, 64),
 			  strconv.FormatFloat(perf[i].t2, 'f', 4, 64),
-			  strconv.FormatFloat(perf[i].up1 + perf[i].up2, 'f', 4, 64),
+			  strconv.FormatFloat(perf[i].up1 + perf[i].up2 + perf[i].upOffline, 'f', 4, 64),
 			  strconv.FormatFloat(perf[i].up1, 'f', 4, 64),
 			  strconv.FormatFloat(perf[i].up2, 'f', 4, 64),
-			  strconv.FormatFloat(perf[i].down1 + perf[i].down2, 'f', 4, 64),
+			  strconv.FormatFloat(perf[i].down1 + perf[i].down2 + perf[i].downOffline, 'f', 4, 64),
 			  strconv.FormatFloat(perf[i].down1, 'f', 4, 64),
 			  strconv.FormatFloat(perf[i].down2, 'f', 4, 64),
 			  "0", "0",
+			  strconv.FormatFloat(perf[i].tOffline, 'f', 4, 64),
+			  strconv.FormatFloat(perf[i].upOffline, 'f', 4, 64),
+			  strconv.FormatFloat(perf[i].downOffline, 'f', 4, 64),
+			  "0",
 		})
 
   }
 }
 
-func writeTputCsv(fn string, 
-                  numClients []int, 
-		  perf []Perf, 
-		  corpus *corpus.Params, 
-                  hintSz float64, 
+func writeTputCsv(fn string,
+                  numClients []int,
+		  perf []Perf,
+		  corpus *corpus.Params,
+                  hintSz float64,
 		  numEmbServers, numUrlServers int) {
   if len(numClients) != len(perf) {
     panic("Should not happen")
@@ -199,9 +223,11 @@ func writeTputCsv(fn string,
 			  strconv.Itoa(numEmbServers),
 			  strconv.Itoa(numUrlServers),
 			  strconv.FormatFloat(hintSz, 'f', 4, 64),
-			  "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", 
+			  "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0",
 			  strconv.FormatFloat(perf[i].tput1, 'f', 4, 64),
 			  strconv.FormatFloat(perf[i].tput2, 'f', 4, 64),
+			  "0", "0", "0",
+			  strconv.FormatFloat(perf[i].tputOffline, 'f', 4, 64),
 		})
 
   }

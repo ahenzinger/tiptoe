@@ -14,10 +14,8 @@ NUM_CLUSTERS = 1
 new_dimension = 384
 prec = 5
 
-#CENTROIDS_FILE = "/home/ubuntu/img_centroids/centroids_all.npy"
-CENTROIDS_FILE = "/home/ubuntu/data/index.faiss"
-#PCA_COMPONENTS_FILE = "/home/ubuntu/img_data/pca_384.npy"
-PCA_COMPONENTS_FILE = "/home/ubuntu/data/pca_384.npy"
+CENTROIDS_FILE = "%s/artifact/dim384/index.faiss"
+PCA_COMPONENTS_FILE = "%s/artifact/dim384/pca_384.npy"
 
 def find_nearest_clusters(cluster_index, query, num_clusters):
         query_float = numpy.array(query).astype('float32')
@@ -48,16 +46,12 @@ def main():
     preamble = sys.argv[1]
     num_clusters = int(sys.argv[2])
 
-    clusterfile = CENTROIDS_FILE#preamble + "/kmeans-clusters.faiss"
+    clusterfile = CENTROIDS_FILE % preamble
     f1 = open(clusterfile, "rb")
     index = faiss.read_index(clusterfile)
     f1.close()
 
-    # Alternative (with file instead of FAISS)
-    #centroids = numpy.loadtxt(CENTROIDS_FILE)
-    #centroids = numpy.round(centroids * (1 << prec))
-
-    components = numpy.load(PCA_COMPONENTS_FILE)
+    components = numpy.load(PCA_COMPONENTS_FILE % preamble)
 
     tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
     clip_model, _ = clip.load('ViT-B/32', 'cpu', jit=False)

@@ -10,6 +10,7 @@ import (
   "github.com/henrycg/simplepir/pir"
   "github.com/henrycg/simplepir/lwe"
   "github.com/henrycg/simplepir/matrix"
+  "github.com/ahenzinger/underhood/underhood"
 )
 
 import (
@@ -28,6 +29,9 @@ type Coordinator struct {
   urlServerConns   []*rpc.Client
 
   hint             *TiptoeHint
+
+  embHintServer   *underhood.Server[matrix.Elem64]
+  urlHintServer   *underhood.Server[matrix.Elem32]
 }
 
 func callServer[T matrix.Elem](conn *rpc.Client,
@@ -37,8 +41,8 @@ func callServer[T matrix.Elem](conn *rpc.Client,
   utils.CallTCP(conn, rpcName, query, ans)
 }
 
-func callServerAlloc[T matrix.Elem](conn *rpc.Client, 
-                                    query *pir.Query[T], 
+func callServerAlloc[T matrix.Elem](conn *rpc.Client,
+                                    query *pir.Query[T],
 			            rpcName string) *pir.Answer[T] {
   ans := new(pir.Answer[T])
   utils.CallTCP(conn, rpcName, query, ans)
@@ -58,15 +62,15 @@ func callServers[T matrix.Elem](query *pir.Query[T], ans *pir.Answer[T], rpcName
 
     go func(at, offset uint64, conn *rpc.Client) {
       q := query.SelectRows(at, offset, hint.Info.Squishing)
-      ch <- callServerAlloc(conn, q, rpcName) 
+      ch <- callServerAlloc(conn, q, rpcName)
     } (at, offset, serverConns[i])
 
     at += offset
   }
 
-  callServer(serverConns[0], 
-             query.SelectRows(0, hint.Offsets[0], hint.Info.Squishing), 
-	     ans, 
+  callServer(serverConns[0],
+             query.SelectRows(0, hint.Offsets[0], hint.Info.Squishing),
+	     ans,
 	     rpcName)
 
   // Add responses
@@ -81,7 +85,30 @@ func (c *Coordinator) GetHint(request bool, h *TiptoeHint) error {
   return nil
 }
 
-func (c *Coordinator) GetEmbeddingsAnswer(query *pir.Query[matrix.Elem64], 
+func (c *Coordinator) ApplyHint(ct *underhood.HintQuery, out *UnderhoodAnswer) error {
+  if c.hint.ServeEmbeddings {
+    if c.embHintServer == nil {
+      c.preprocessEmbHint()
+    }
+    out.EmbAnswer = *c.embHintServer.HintAnswer(ct)
+
+    if c.hint.ServeUrls {
+      toDrop := int(c.hint.EmbeddingsHint.Info.Params.N - c.hint.UrlsHint.Info.Params.N)
+      *ct = (*ct)[:len(*ct)-toDrop]
+    }
+  }
+
+  if c.hint.ServeUrls {
+    if c.urlHintServer == nil {
+      c.preprocessUrlHint()
+    }
+    out.UrlAnswer = *c.urlHintServer.HintAnswer(ct)
+  }
+
+  return nil
+}
+
+func (c *Coordinator) GetEmbeddingsAnswer(query *pir.Query[matrix.Elem64],
                                           ans *pir.Answer[matrix.Elem64]) error {
   if c.numEmbServers == 0 {
     panic("Coordinator does not know of any cluster servers.")
@@ -92,7 +119,7 @@ func (c *Coordinator) GetEmbeddingsAnswer(query *pir.Query[matrix.Elem64],
   return nil
 }
 
-func (c *Coordinator) GetUrlsAnswer(query *pir.Query[matrix.Elem32], 
+func (c *Coordinator) GetUrlsAnswer(query *pir.Query[matrix.Elem32],
                                     ans *pir.Answer[matrix.Elem32]) error {
   if c.numUrlServers == 0 {
     panic("Coordinator does not know of any URL servers")
@@ -116,7 +143,7 @@ func (c *Coordinator) SetupConns() {
   }
 }
 
-func (c *Coordinator) fetchHints(addrs []string, 
+func (c *Coordinator) fetchHints(addrs []string,
                                  initInfo func(*TiptoeHint, *TiptoeHint),
 				 checkConsistent func(*TiptoeHint, *TiptoeHint) bool,
 			         mergeInfo func(*TiptoeHint, *TiptoeHint)) []*rpc.Client {
@@ -146,6 +173,54 @@ func (c *Coordinator) fetchHints(addrs []string,
   return conns
 }
 
+func (c *Coordinator) buildHintsLocal(conf *config.Config) {
+  // Build embeddings hint
+  for i := 0; i < conf.MAX_EMBEDDINGS_SERVERS(); i += BLOCK_SZ {
+    fmt.Printf("  on embedding hint %d of %d\n", i, conf.MAX_EMBEDDINGS_SERVERS())
+    s, _, _ := NewEmbeddingServers(i, 
+                                   i + BLOCK_SZ,
+                                   conf.EMBEDDINGS_CLUSTERS_PER_SERVER(),
+                                   conf.DEFAULT_EMBEDDINGS_HINT_SZ(),
+                                   true, // log
+                                   false, // wantCorpus
+                                   false, // serve
+                                   conf)
+    for j := 0; j < BLOCK_SZ; j++ {
+      h := s[j].hint
+      if i == 0 && j == 0 {
+        embeddingsInitInfo(c.hint, h) 
+      } else {
+        if !embeddingsCheckConsistent(c.hint, h) {
+          panic("Embedding hint params are not consistent")
+        }
+        embeddingsMergeInfo(c.hint, h)
+      }
+    }
+    runtime.GC()
+  }
+
+  // Build URL hint
+  s, _, _ := NewUrlServers(conf.MAX_URL_SERVERS(),
+                           conf.URL_CLUSTERS_PER_SERVER(),
+                           config.DEFAULT_URL_HINT_SZ(),
+                           true, // log
+                           false, // wantCorpus
+                           false, // serve
+                           conf)
+  h := s[0].hint
+  urlsInitInfo(c.hint, h)
+
+  for i := 1; i < conf.MAX_URL_SERVERS(); i++ {
+    fmt.Printf("  on url hint %d of %d\n", i, conf.MAX_URL_SERVERS())
+    h := s[i].hint
+    if !urlsCheckConsistent(c.hint, h) {
+      panic("URL hint params are not consistent")
+    }
+    urlsMergeInfo(c.hint, h)
+    runtime.GC()
+  }
+}
+
 func embeddingsInitInfo(nh *TiptoeHint, h *TiptoeHint) {
   nh.CParams.NumDocs = h.CParams.NumDocs
   nh.CParams.EmbeddingSlots = h.CParams.EmbeddingSlots
@@ -164,7 +239,7 @@ func embeddingsCheckConsistent(nh *TiptoeHint, h *TiptoeHint) bool {
 
 func embeddingsMergeInfo(nh *TiptoeHint, h *TiptoeHint) {
   nh.CParams.NumDocs += h.CParams.NumDocs
-  database.MergeClusterMap(nh.EmbeddingsIndexMap, h.EmbeddingsIndexMap, 
+  database.MergeClusterMap(nh.EmbeddingsIndexMap, h.EmbeddingsIndexMap,
                            nh.EmbeddingsHint.Info.M, h.EmbeddingsHint.Info.M)
   utils.MergeHints(&nh.EmbeddingsHint, h.EmbeddingsHint)
 }
@@ -191,7 +266,7 @@ func urlsMergeInfo(nh *TiptoeHint, h *TiptoeHint) {
     nh.CParams.NumDocs += h.CParams.NumDocs
   }
 
-  database.MergeSubclusterMap(nh.UrlsIndexMap, h.UrlsIndexMap, 
+  database.MergeSubclusterMap(nh.UrlsIndexMap, h.UrlsIndexMap,
                               nh.UrlsHint.Info.M, h.UrlsHint.Info.M)
   utils.MergeHints(&nh.UrlsHint, h.UrlsHint)
 
@@ -213,12 +288,12 @@ func (c *Coordinator) setup(numEmbServers, numUrlServers int, addrs []string) {
 
   // Gather and merge hints from servers
   fmt.Println("  0. Gathering hints")
-  c.embServerConns = c.fetchHints(c.embServerAddrs, 
+  c.embServerConns = c.fetchHints(c.embServerAddrs,
                                   embeddingsInitInfo,
 				  embeddingsCheckConsistent,
 		  	          embeddingsMergeInfo)
 
-  c.urlServerConns = c.fetchHints(c.urlServerAddrs, 
+  c.urlServerConns = c.fetchHints(c.urlServerAddrs,
                                   urlsInitInfo,
 				  urlsCheckConsistent,
 		                  urlsMergeInfo)
@@ -237,8 +312,36 @@ func (c *Coordinator) setup(numEmbServers, numUrlServers int, addrs []string) {
   }
 }
 
-func (c *Coordinator) Setup(numEmbServers, numUrlServers int, 
-			    addrs []string, 
+func (c *Coordinator) preprocessEmbHint() {
+  // Decompose hint
+  c.embHintServer = underhood.NewServerHintOnly(&c.hint.EmbeddingsHint.Hint)
+
+  // Drop hint contents that shouldn't be sent back
+  rows := c.hint.EmbeddingsHint.Hint.Rows()
+  c.hint.EmbeddingsHint.Hint.DropLastrows(rows)
+}
+
+func (c *Coordinator) preprocessUrlHint() {
+  // Decompose hint
+  c.urlHintServer = underhood.NewServerHintOnly(&c.hint.UrlsHint.Hint)
+
+  // Drop hint contents that shouldn't be sent back
+  rows := c.hint.UrlsHint.Hint.Rows()
+  c.hint.UrlsHint.Hint.DropLastrows(rows)
+}
+
+func (c *Coordinator) preprocessHint() {
+  if c.hint.ServeEmbeddings {
+    c.preprocessEmbHint()
+  }
+
+  if c.hint.ServeUrls {
+    c.preprocessUrlHint()
+  }
+}
+
+func (c *Coordinator) Setup(numEmbServers, numUrlServers int,
+			    addrs []string,
 			    log bool,
 		            conf *config.Config) {
   if len(addrs) != numEmbServers + numUrlServers {
@@ -247,7 +350,7 @@ func (c *Coordinator) Setup(numEmbServers, numUrlServers int,
   fmt.Println("Setting up coordinator")
 
   logfile := conf.CoordinatorLog(numEmbServers, numUrlServers)
- 
+
   if log && utils.FileExists(logfile) {
     LoadStateFromFile(c, logfile)
     c.embServerAddrs = addrs[:numEmbServers]
@@ -259,11 +362,47 @@ func (c *Coordinator) Setup(numEmbServers, numUrlServers int,
       DumpStateToFile(c, logfile)
     }
   }
+
+  c.preprocessHint()
 }
 
-func RunCoordinator(numEmbServers, numUrlServers, port int, 
+func LocalSetupCoordinator(conf *config.Config) {
+  fmt.Println("Setting up coordinator")
+
+  // Init state
+  c := coordinatorInit()
+  c.hint = new(TiptoeHint)
+  c.numEmbServers = conf.MAX_EMBEDDINGS_SERVERS()
+  c.hint.ServeEmbeddings = (c.numEmbServers > 0)
+
+  c.numUrlServers = conf.MAX_URL_SERVERS()
+  c.hint.ServeUrls = (c.numUrlServers > 0)
+
+  // Gather and merge hints from servers
+  fmt.Println("  0. Gathering hints -- locally")
+  c.buildHintsLocal(conf)
+
+  // Check that LWE params are safe
+  if c.hint.ServeEmbeddings && !lwe.CheckParams(c.hint.EmbeddingsHint.Info.Params.Logq,
+                                                c.hint.EmbeddingsHint.Info.M,
+                                                c.hint.EmbeddingsHint.Info.Params.P) {
+    panic("LWE params used for embeddings are bad.")
+  }
+
+  if c.hint.ServeUrls && !lwe.CheckParams(c.hint.UrlsHint.Info.Params.Logq,
+                                          c.hint.UrlsHint.Info.M,
+                                          c.hint.UrlsHint.Info.Params.P) {
+    panic("LWE params used for URLs are bad.")
+  }
+
+  // Write state to file
+  logfile := conf.CoordinatorLog(c.numEmbServers, c.numUrlServers)
+  DumpStateToFile(c, logfile)
+}
+
+func RunCoordinator(numEmbServers, numUrlServers, port int,
                     addrs []string, log bool, conf *config.Config) {
-  k := new(Coordinator)
+  k := coordinatorInit()
   k.Setup(numEmbServers, numUrlServers, addrs, log, conf)
   fmt.Println("Ready to start answering queries")
   k.Serve(port)
@@ -275,6 +414,10 @@ func (c *Coordinator) Serve(port int) {
   utils.ListenAndServeTLS(rs, port)
 }
 
+func coordinatorInit() *Coordinator {
+  return new(Coordinator)
+}
+
 func (c *Coordinator) Free() {
   for _, conn := range c.embServerConns {
     conn.Close()
@@ -282,5 +425,13 @@ func (c *Coordinator) Free() {
 
   for _, conn := range c.urlServerConns {
     conn.Close()
+  }
+
+  if c.embHintServer != nil {
+    c.embHintServer.Free()
+  }
+
+  if c.urlHintServer != nil {
+    c.urlHintServer.Free()
   }
 }

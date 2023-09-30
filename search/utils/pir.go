@@ -8,6 +8,7 @@ import (
   "github.com/henrycg/simplepir/pir"
   "github.com/henrycg/simplepir/rand"
   "github.com/henrycg/simplepir/matrix"
+  "github.com/ahenzinger/underhood/underhood"
 )
 
 type PIR_hint[T matrix.Elem] struct {
@@ -42,7 +43,7 @@ func MergeHints[T matrix.Elem](h *PIR_hint[T], nh PIR_hint[T]) {
   }
 
   // Update DB info
-  h.Info.Params.M += nh.Info.Params.M 
+  h.Info.Params.M += nh.Info.Params.M
   h.Info.M += nh.Info.M
   if nh.Info.L > h.Info.L {
     h.Info.L = nh.Info.L
@@ -50,7 +51,7 @@ func MergeHints[T matrix.Elem](h *PIR_hint[T], nh PIR_hint[T]) {
   h.Info.Num += nh.Info.Num
 
   // Update DB hint
-  h.Hint.AddWithMismatch(&nh.Hint) 
+  h.Hint.AddWithMismatch(&nh.Hint)
   if h.Hint.Rows() != h.Info.L {
     panic("Should not happen")
   }
@@ -69,6 +70,10 @@ func NewPirClient[T matrix.Elem](h *PIR_hint[T]) *pir.Client[T] {
   return pir.NewClientDistributed(&h.Hint, h.Seeds, h.Offsets, &h.Info)
 }
 
-func PrintParams[T matrix.Elem](c *pir.Client[T]) string {
-  return fmt.Sprintf("M = %d; L = %d; P = %d", c.GetM(), c.GetL(), c.GetP())
+func NewUnderhoodClient[T matrix.Elem](h *PIR_hint[T]) *underhood.Client[T] {
+  return underhood.NewClientDistributed[T](h.Seeds, h.Offsets, &h.Info)
+}
+
+func PrintParams(i *pir.DBInfo) string {
+  return fmt.Sprintf("M = %d; L = %d; p = %d; n = %d", i.M, i.L, i.Params.P, i.Params.N)
 }

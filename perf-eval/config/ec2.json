@@ -7,9 +7,10 @@
 "placement": "us-east-1f",
 "keyname": "<your key name here>",
 "instance_type": "r5.xlarge",
-"lat_client_instance_type": "r5.large",
+"lat_client_instance_type": "r5.xlarge",
 "tput_client_instance_type": "r5.8xlarge",
-"ami_id": "ami-0df821b98de4b1ed9",
+"coordinator_instance_type": "r5.8xlarge",
+"ami_id": "<your ami here>",
 "security": "<your security group name here>",
 "secret_key_path": "<your secret key pair path here>"
 }
